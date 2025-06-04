@@ -543,33 +543,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           // 添加清除按鈕區域
           if (_clockedInToday || _clockedOutToday) ...[
             const SizedBox(height: 24),
-            const Divider(),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                if (_clockedInToday)
-                  ElevatedButton.icon(
-                    onPressed: _clearClockInRecord,
-                    icon: const Icon(Icons.delete),
-                    label: const Text('清除上班打卡'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade50,
-                      foregroundColor: Colors.red,
-                    ),
-                  ),
-                if (_clockedOutToday)
-                  ElevatedButton.icon(
-                    onPressed: _clearClockOutRecord,
-                    icon: const Icon(Icons.delete),
-                    label: const Text('清除下班打卡'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade50,
-                      foregroundColor: Colors.red,
-                    ),
-                  ),
-              ],
-            ),
+            // const Divider(),
+            // const SizedBox(height: 8),
+            // Row(
+            //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            //   children: [
+            //     if (_clockedInToday)
+            //       ElevatedButton.icon(
+            //         onPressed: _clearClockInRecord,
+            //         icon: const Icon(Icons.delete),
+            //         label: const Text('清除上班打卡'),
+            //         style: ElevatedButton.styleFrom(
+            //           backgroundColor: Colors.red.shade50,
+            //           foregroundColor: Colors.red,
+            //         ),
+            //       ),
+            //     if (_clockedOutToday)
+            //       ElevatedButton.icon(
+            //         onPressed: _clearClockOutRecord,
+            //         icon: const Icon(Icons.delete),
+            //         label: const Text('清除下班打卡'),
+            //         style: ElevatedButton.styleFrom(
+            //           backgroundColor: Colors.red.shade50,
+            //           foregroundColor: Colors.red,
+            //         ),
+            //       ),
+            //   ],
+            // ),
           ]
         ],
       ),
