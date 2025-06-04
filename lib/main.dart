@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
 import 'pages/notification_settings_page.dart';
+import 'pages/auto_clock_settings_page.dart';
 import 'services/notification_service.dart';
+import 'services/auto_clock_service.dart';
+import 'services/background_service.dart';
 import 'models/weekend_tracker.dart';
 
 void main() async {
@@ -13,6 +17,9 @@ void main() async {
   
   // Initialize notification service
   await NotificationService().init();
+  
+  // Initialize auto clock service (which also initializes background service)
+  await AutoClockService().init();
   
   runApp(const AttendanceApp());
 }
@@ -241,6 +248,11 @@ class _HomePageState extends State<HomePage> {
                   context,
                   MaterialPageRoute(builder: (context) => const NotificationSettingsPage()),
                 ).then((_) => _scheduleNotifications());
+              } else if (value == 'auto_clock') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AutoClockSettingsPage()),
+                );
               }
             },
             itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
@@ -256,6 +268,13 @@ class _HomePageState extends State<HomePage> {
                 child: ListTile(
                   leading: Icon(Icons.notifications),
                   title: Text('提醒設置'),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'auto_clock',
+                child: ListTile(
+                  leading: Icon(Icons.schedule),
+                  title: Text('自動打卡設置'),
                 ),
               ),
             ],
