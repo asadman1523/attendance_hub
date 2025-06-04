@@ -4,8 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'pages/notification_settings_page.dart';
+import 'services/notification_service.dart';
+import 'models/weekend_tracker.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize notification service
+  await NotificationService().init();
+  
   runApp(const AttendanceApp());
 }
 
@@ -38,17 +46,42 @@ class _HomePageState extends State<HomePage> {
   String? _clockInTime;
   String? _clockOutTime;
   late Future<void> _initFuture;
+  final NotificationService _notificationService = NotificationService();
+  bool _isWorkday = true;
+  bool _isBigWeekend = false;
 
   @override
   void initState() {
     super.initState();
     _initFuture = _initAttendanceStatus();
+    
+    // Schedule notifications when the app starts
+    _scheduleNotifications();
+  }
+  
+  Future<void> _scheduleNotifications() async {
+    await _notificationService.scheduleNotifications();
+    _checkWorkdayStatus();
+  }
+  
+  Future<void> _checkWorkdayStatus() async {
+    final isWorkday = await WeekendTracker.isWorkday();
+    final isBigWeekend = await WeekendTracker.isBigWeekendWeek();
+    
+    if (mounted) {
+      setState(() {
+        _isWorkday = isWorkday;
+        _isBigWeekend = isBigWeekend;
+      });
+    }
   }
 
   Future<void> _initAttendanceStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-
+    
+    await _checkWorkdayStatus();
+    
     setState(() {
       _clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
       _clockedOutToday = prefs.getBool('clockedOut_$today') ?? false;
@@ -196,12 +229,36 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('考勤系統'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const SettingsPage()),
-            ).then((_) => _initAttendanceStatus()),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'settings') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsPage()),
+                ).then((_) => _initAttendanceStatus());
+              } else if (value == 'notifications') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const NotificationSettingsPage()),
+                ).then((_) => _scheduleNotifications());
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'settings',
+                child: ListTile(
+                  leading: Icon(Icons.settings),
+                  title: Text('Webhook 設置'),
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'notifications',
+                child: ListTile(
+                  leading: Icon(Icons.notifications),
+                  title: Text('提醒設置'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -211,7 +268,7 @@ class _HomePageState extends State<HomePage> {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-
+          
           return Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -227,6 +284,28 @@ class _HomePageState extends State<HomePage> {
                           '今天：${DateFormat('yyyy年MM月dd日').format(DateTime.now())}',
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(
+                              _isWorkday ? Icons.work : Icons.weekend,
+                              color: _isWorkday ? Colors.blue : Colors.orange,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _isWorkday ? '今天是工作日' : '今天是休息日',
+                              style: TextStyle(
+                                color: _isWorkday ? Colors.blue : Colors.orange,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '本週為${_isBigWeekend ? '大' : '小'}週末 (${_isBigWeekend ? '週一、二休息' : '僅週一休息'})',
+                          style: const TextStyle(color: Colors.grey),
                         ),
                         const SizedBox(height: 16),
                         Row(
@@ -258,7 +337,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(height: 32),
                 ElevatedButton.icon(
-                  onPressed: _clockedInToday ? null : _clockIn,
+                  onPressed: !_isWorkday || _clockedInToday ? null : _clockIn,
                   icon: const Icon(Icons.login),
                   label: const Text('上班打卡'),
                   style: ElevatedButton.styleFrom(
@@ -270,7 +349,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(height: 16),
                 ElevatedButton.icon(
-                  onPressed: _clockedOutToday ? null : _clockOut,
+                  onPressed: !_isWorkday || _clockedOutToday ? null : _clockOut,
                   icon: const Icon(Icons.logout),
                   label: const Text('下班打卡'),
                   style: ElevatedButton.styleFrom(
