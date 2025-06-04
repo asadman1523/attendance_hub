@@ -4,12 +4,17 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../models/weekend_tracker.dart';
 
 // 背景任務的唯一標識符
 const clockInTaskName = "com.attendance_hub.clockInTask";
 const clockOutTaskName = "com.attendance_hub.clockOutTask";
 const clockInitializeTaskName = "com.attendance_hub.initializeTask";
+
+// 自動打卡通知ID
+const autoClockInNotificationId = 100;
+const autoClockOutNotificationId = 101;
 
 class BackgroundService {
   static final BackgroundService _instance = BackgroundService._internal();
@@ -110,6 +115,48 @@ class BackgroundService {
   }
 }
 
+// 顯示自動打卡通知
+Future<void> _showAutoClockNotification(String action, String time) async {
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+  
+  // 通知設置
+  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    'auto_clock_channel',
+    '自動打卡通知',
+    channelDescription: '自動打卡成功時發送的通知',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+  
+  const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+    presentAlert: true,
+    presentBadge: true,
+    presentSound: true,
+  );
+  
+  const NotificationDetails notificationDetails = NotificationDetails(
+    android: androidDetails,
+    iOS: iosDetails,
+  );
+  
+  // 根據動作類型顯示不同的通知
+  if (action == 'clockIn') {
+    await flutterLocalNotificationsPlugin.show(
+      autoClockInNotificationId,
+      '自動上班打卡成功',
+      '系統已於 $time 自動完成上班打卡',
+      notificationDetails,
+    );
+  } else {
+    await flutterLocalNotificationsPlugin.show(
+      autoClockOutNotificationId,
+      '自動下班打卡成功',
+      '系統已於 $time 自動完成下班打卡',
+      notificationDetails,
+    );
+  }
+}
+
 // 全局函數，作為 Workmanager 的入口點
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -172,26 +219,57 @@ void callbackDispatcher() {
 
 Future<bool> _performClocking(String webhookUrl, String action, String today, SharedPreferences prefs) async {
   try {
+    final now = DateTime.now();
+    final formattedTime = DateFormat('HH:mm:ss').format(now);
+    
     final response = await http.post(
       Uri.parse(webhookUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'action': action,
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': now.toIso8601String(),
         'source': 'background_service'
       }),
     );
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      final now = DateFormat('HH:mm:ss').format(DateTime.now());
+      // 成功打卡，設置標記
       if (action == 'clockIn') {
+        // 標記今天已經上班打卡
         await prefs.setBool('clockedIn_$today', true);
-        await prefs.setString('clockInTime_$today', now);
-        debugPrint('BackgroundTask: Clock-in successful');
+        await prefs.setString('clockInTime_$today', formattedTime);
+        debugPrint('BackgroundTask: Clock-in successful at $formattedTime');
+        
+        // 初始化通知插件
+        final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+        
+        // 初始化設置
+        const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+        final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+        final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+        
+        await flutterLocalNotificationsPlugin.initialize(initSettings);
+        
+        // 顯示通知
+        await _showAutoClockNotification('clockIn', formattedTime);
       } else {
+        // 標記今天已經下班打卡
         await prefs.setBool('clockedOut_$today', true);
-        await prefs.setString('clockOutTime_$today', now);
-        debugPrint('BackgroundTask: Clock-out successful');
+        await prefs.setString('clockOutTime_$today', formattedTime);
+        debugPrint('BackgroundTask: Clock-out successful at $formattedTime');
+        
+        // 初始化通知插件
+        final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+        
+        // 初始化設置
+        const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+        final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+        final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+        
+        await flutterLocalNotificationsPlugin.initialize(initSettings);
+        
+        // 顯示通知
+        await _showAutoClockNotification('clockOut', formattedTime);
       }
       return true;
     } else {

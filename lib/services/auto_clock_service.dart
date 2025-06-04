@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../models/weekend_tracker.dart';
 import 'background_service.dart';
 
@@ -27,6 +28,13 @@ class AutoClockService {
   static const int defaultClockOutHour = 18;
   static const int defaultClockOutMinute = 30;
 
+  // 自動打卡通知ID
+  static const int autoClockInNotificationId = 200;
+  static const int autoClockOutNotificationId = 201;
+  
+  // 通知插件
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+
   // Auto-clock timer (for in-app checking)
   Timer? _timer;
   bool _isRunning = false;
@@ -36,11 +44,66 @@ class AutoClockService {
 
   // Initialize the service
   Future<void> init() async {
+    // Initialize notifications
+    await _initializeNotifications();
+    
     // Start the in-app timer
     _startPeriodicCheck();
     
     // Also setup the background service for when app is not running
     await _backgroundService.init();
+    
+    // 立即檢查一次打卡狀態（用於從背景返回時）
+    _checkCurrentStatus();
+  }
+  
+  // Initialize notifications
+  Future<void> _initializeNotifications() async {
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+    final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    
+    await _notificationsPlugin.initialize(initSettings);
+  }
+
+  // 顯示自動打卡通知
+  Future<void> _showAutoClockNotification(String action, String time) async {
+    // 通知設置
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'auto_clock_channel',
+      '自動打卡通知',
+      channelDescription: '自動打卡成功時發送的通知',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    // 根據動作類型顯示不同的通知
+    if (action == 'clockIn') {
+      await _notificationsPlugin.show(
+        autoClockInNotificationId,
+        '自動上班打卡成功',
+        '系統已於 $time 自動完成上班打卡',
+        notificationDetails,
+      );
+    } else {
+      await _notificationsPlugin.show(
+        autoClockOutNotificationId,
+        '自動下班打卡成功',
+        '系統已於 $time 自動完成下班打卡',
+        notificationDetails,
+      );
+    }
   }
 
   // Start periodic check (every minute) - this runs when app is open
@@ -72,13 +135,7 @@ class AutoClockService {
     final now = DateTime.now();
     final today = DateFormat('yyyy-MM-dd').format(now);
     final prefs = await SharedPreferences.getInstance();
-    final lastCheckedDate = prefs.getString(lastCheckedDateKey) ?? '';
-
-    // Check if we already processed today's clock events
-    if (lastCheckedDate == today) {
-      return;
-    }
-
+    
     // Check if today is a workday
     final isWorkday = await WeekendTracker.isWorkday();
     if (!isWorkday) {
@@ -102,8 +159,10 @@ class AutoClockService {
         currentHour == clockInHour && 
         currentMinute == clockInMinute &&
         !(prefs.getBool('clockedIn_$today') ?? false)) {
-      await _triggerWebhook('clockIn');
-      debugPrint('AutoClockService: Auto clock-in triggered at $clockInHour:$clockInMinute');
+      final success = await _triggerWebhook('clockIn');
+      if (success) {
+        debugPrint('AutoClockService: Auto clock-in triggered and marked at $clockInHour:$clockInMinute');
+      }
     }
 
     // Check if it's time to clock out
@@ -111,65 +170,74 @@ class AutoClockService {
         currentHour == clockOutHour && 
         currentMinute == clockOutMinute &&
         !(prefs.getBool('clockedOut_$today') ?? false)) {
-      await _triggerWebhook('clockOut');
-      debugPrint('AutoClockService: Auto clock-out triggered at $clockOutHour:$clockOutMinute');
-    }
-
-    // Update the last checked date if both times have passed for today
-    final bothTimesPassed = (currentHour > clockOutHour || 
-                          (currentHour == clockOutHour && currentMinute >= clockOutMinute));
-    if (bothTimesPassed) {
-      await prefs.setString(lastCheckedDateKey, today);
+      final success = await _triggerWebhook('clockOut');
+      if (success) {
+        debugPrint('AutoClockService: Auto clock-out triggered and marked at $clockOutHour:$clockOutMinute');
+      }
     }
   }
 
-  Future<void> _triggerWebhook(String action) async {
+  Future<bool> _triggerWebhook(String action) async {
     final prefs = await SharedPreferences.getInstance();
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final webhookUrl = prefs.getString('webhookUrl');
     
     if (webhookUrl == null || webhookUrl.isEmpty) {
       debugPrint('AutoClockService: Webhook URL not configured');
-      return;
+      return false;
     }
 
     // Check if already clocked in/out today
     if (action == 'clockIn' && (prefs.getBool('clockedIn_$today') ?? false)) {
       debugPrint('AutoClockService: Already clocked in today');
-      return;
+      return false;
     }
     if (action == 'clockOut' && (prefs.getBool('clockedOut_$today') ?? false)) {
       debugPrint('AutoClockService: Already clocked out today');
-      return;
+      return false;
     }
 
     try {
+      final now = DateTime.now();
+      final formattedTime = DateFormat('HH:mm:ss').format(now);
+      
       final response = await http.post(
         Uri.parse(webhookUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'action': action,
-          'timestamp': DateTime.now().toIso8601String(),
+          'timestamp': now.toIso8601String(),
           'source': 'auto_clock_service'
         }),
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final now = DateFormat('HH:mm:ss').format(DateTime.now());
+        // 成功打卡後設置標記
         if (action == 'clockIn') {
+          // 標記今天已經上班打卡
           await prefs.setBool('clockedIn_$today', true);
-          await prefs.setString('clockInTime_$today', now);
-          debugPrint('AutoClockService: Clock-in successful');
+          await prefs.setString('clockInTime_$today', formattedTime);
+          
+          // 顯示通知
+          await _showAutoClockNotification('clockIn', formattedTime);
+          debugPrint('AutoClockService: ✅ Clock-in successful and marked at $formattedTime');
         } else {
+          // 標記今天已經下班打卡
           await prefs.setBool('clockedOut_$today', true);
-          await prefs.setString('clockOutTime_$today', now);
-          debugPrint('AutoClockService: Clock-out successful');
+          await prefs.setString('clockOutTime_$today', formattedTime);
+          
+          // 顯示通知
+          await _showAutoClockNotification('clockOut', formattedTime);
+          debugPrint('AutoClockService: ✅ Clock-out successful and marked at $formattedTime');
         }
+        return true;
       } else {
-        debugPrint('AutoClockService: Webhook failed: ${response.body}');
+        debugPrint('AutoClockService: ❌ Webhook failed: ${response.body}');
+        return false;
       }
     } catch (e) {
-      debugPrint('AutoClockService: Error triggering webhook: $e');
+      debugPrint('AutoClockService: ❌ Error triggering webhook: $e');
+      return false;
     }
   }
 
@@ -216,6 +284,22 @@ class AutoClockService {
       return;
     }
     
-    await _triggerWebhook(action);
+    final success = await _triggerWebhook(action);
+    if (success) {
+      debugPrint('AutoClockService: Force $action triggered successfully');
+    }
+  }
+
+  // 檢查目前的打卡狀態
+  Future<void> _checkCurrentStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    
+    final clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
+    final clockedOutToday = prefs.getBool('clockedOut_$today') ?? false;
+    final clockInTime = prefs.getString('clockInTime_$today');
+    final clockOutTime = prefs.getString('clockOutTime_$today');
+    
+    debugPrint('AutoClockService: 檢查今日狀態 - 上班打卡: $clockedInToday (${clockInTime ?? '無時間'}), 下班打卡: $clockedOutToday (${clockOutTime ?? '無時間'})');
   }
 } 

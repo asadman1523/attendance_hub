@@ -215,6 +215,8 @@ class _AutoClockSettingsPageState extends State<AutoClockSettingsPage> {
                           const Text('• 需要設定正確的Webhook URL才能成功打卡'),
                           const Text('• 如果該時間點已經手動打過卡，系統將不會重複打卡'),
                           const Text('• 現在支持在後台運行，即使應用程序未開啟也能打卡'),
+                          const Text('• 若清除今天的打卡記錄，到達設定時間時系統會重新自動打卡'),
+                          const Text('• 自動打卡成功後會自動標記為今日已打卡，並發送通知提醒'),
                           const SizedBox(height: 12),
                           Container(
                             padding: const EdgeInsets.all(8),
