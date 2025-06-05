@@ -2,6 +2,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 精確鬧鐘權限 (Android 12+) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 可選：用於 Android 14+ 的備用權限 -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <application
         android:name="${applicationName}"

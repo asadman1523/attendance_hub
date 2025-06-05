@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 class WeekendTracker {
   static const String lastBigWeekendKey = 'lastBigWeekend';
+  static const String manualOverrideKey = 'manualWeekendOverride';
+  static const String manualOverrideValueKey = 'manualWeekendOverrideValue';
   
   // Check if today is a workday
   static Future<bool> isWorkday() async {
@@ -27,6 +29,13 @@ class WeekendTracker {
   // Check if this is currently a big weekend week
   static Future<bool> isBigWeekendWeek() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // Check if there's a manual override
+    final hasOverride = prefs.getBool(manualOverrideKey) ?? false;
+    if (hasOverride) {
+      return prefs.getBool(manualOverrideValueKey) ?? false;
+    }
+    
     final now = DateTime.now();
     
     // Get the timestamp of the last big weekend (where both Mon+Tue were off)
@@ -54,6 +63,8 @@ class WeekendTracker {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     await prefs.setInt(lastBigWeekendKey, now.millisecondsSinceEpoch);
+    // Clear any manual override
+    await prefs.setBool(manualOverrideKey, false);
     debugPrint('Marked today (${now.toIso8601String()}) as the latest big weekend');
   }
   
@@ -61,6 +72,16 @@ class WeekendTracker {
   static Future<void> resetWeekendTracking() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(lastBigWeekendKey);
+    // Clear any manual override
+    await prefs.setBool(manualOverrideKey, false);
     debugPrint('Reset weekend tracking');
+  }
+  
+  // Manually set whether this is a big weekend week or not
+  static Future<void> setManualWeekendMode(bool isBigWeekend) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(manualOverrideKey, true);
+    await prefs.setBool(manualOverrideValueKey, isBigWeekend);
+    debugPrint('Manually set weekend mode to: ${isBigWeekend ? "Big Weekend" : "Small Weekend"}');
   }
 } 
