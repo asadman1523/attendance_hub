@@ -62,9 +62,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _hasWebhook = false;
   String? _notificationInTime;
   String? _notificationOutTime;
-  // Add half-day leave state variables
+  // Half-day leave state variables
   bool _morningHalfDayLeaveEnabled = false;
   bool _afternoonHalfDayLeaveEnabled = false;
+  // 整天請假狀態
+  bool _fullDayLeaveEnabled = false;
   Timer? _refreshTimer;
 
   @override
@@ -164,6 +166,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Get half-day leave settings
     final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
     final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+    // 獲取整天請假設定
+    final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
     
     setState(() {
       _clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
@@ -177,6 +181,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _notificationOutTime = '${notificationSettings['clockOutHour'].toString().padLeft(2, '0')}:${notificationSettings['clockOutMinute'].toString().padLeft(2, '0')}';
       _morningHalfDayLeaveEnabled = morningHalfDayLeave;
       _afternoonHalfDayLeaveEnabled = afternoonHalfDayLeave;
+      _fullDayLeaveEnabled = fullDayLeave;
     });
   }
   
@@ -375,6 +380,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  // Toggle full-day leave
+  Future<void> _toggleFullDayLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    
+    // 檢查是否已啟用半天假
+    if (!_fullDayLeaveEnabled && (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled)) {
+      _showMessage('不能同時啟用整天假和半天假');
+      return;
+    }
+    
+    final newValue = !_fullDayLeaveEnabled;
+    
+    // 提示用戶
+    if (newValue) {
+      _showMessage('已設定整天請假。今天所有自動打卡將暫停');
+    } else {
+      _showMessage('已取消整天請假設定');
+    }
+    
+    await prefs.setBool('fullDayLeave_$today', newValue);
+    
+    setState(() {
+      _fullDayLeaveEnabled = newValue;
+    });
+  }
+  
   // Toggle morning half-day leave
   Future<void> _toggleMorningHalfDayLeave() async {
     final prefs = await SharedPreferences.getInstance();
@@ -384,6 +416,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // 檢查時間，只有在13:00前才能啟用上午請假
     if (now.hour >= 13 && !_morningHalfDayLeaveEnabled) {
       _showMessage('已超過上午請假的時間限制（限13:00前啟用）');
+      return;
+    }
+    
+    // 檢查是否已啟用整天假
+    if (_fullDayLeaveEnabled && !_morningHalfDayLeaveEnabled) {
+      _showMessage('不能同時啟用半天假和整天假');
       return;
     }
     
@@ -418,6 +456,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // 檢查時間，只有在13:31前才能啟用下午請假
     if ((now.hour > 13 || (now.hour == 13 && now.minute >= 31)) && !_afternoonHalfDayLeaveEnabled) {
       _showMessage('已超過下午請假的時間限制（限13:31前啟用）');
+      return;
+    }
+    
+    // 檢查是否已啟用整天假
+    if (_fullDayLeaveEnabled && !_afternoonHalfDayLeaveEnabled) {
+      _showMessage('不能同時啟用半天假和整天假');
       return;
     }
     
@@ -870,7 +914,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        '半天假設定',
+                        '請假設定',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                       ),
                       const SizedBox(height: 8),
@@ -878,16 +922,46 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         '啟用後將自動在特定時間打卡，且優先於一般自動打卡設定',
                         style: TextStyle(color: Colors.grey, fontSize: 12),
                       ),
-                      if (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled) ...[
+                      if (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled || _fullDayLeaveEnabled) ...[
                         const SizedBox(height: 6),
                         Text(
-                          _morningHalfDayLeaveEnabled 
-                              ? '今天上班將於 13:00 自動打卡' 
-                              : '今天下班將於 13:31 自動打卡',
+                          _fullDayLeaveEnabled 
+                              ? '今天已設定整天請假，自動打卡已暫停' 
+                              : (_morningHalfDayLeaveEnabled 
+                                  ? '今天上班將於 13:00 自動打卡'
+                                  : '今天下班將於 13:31 自動打卡'),
                           style: const TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.bold),
                         ),
                       ],
                       const SizedBox(height: 16),
+                      
+                      // 整天請假選項
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('整天請假', style: TextStyle(fontWeight: FontWeight.bold)),
+                              Switch(
+                                value: _fullDayLeaveEnabled,
+                                onChanged: (_) => _toggleFullDayLeave(),
+                                activeColor: Colors.red,
+                              ),
+                            ],
+                          ),
+                          const Text('暫停今天所有自動打卡', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          const SizedBox(height: 8),
+                          const Divider(),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 8),
+                      const Text(
+                        '半天請假設定',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
@@ -898,7 +972,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               const SizedBox(height: 4),
                               Switch(
                                 value: _morningHalfDayLeaveEnabled,
-                                onChanged: (_) => _toggleMorningHalfDayLeave(),
+                                onChanged: _fullDayLeaveEnabled ? null : (_) => _toggleMorningHalfDayLeave(),
                                 activeColor: Colors.orange,
                               ),
                               Text('13:00打卡', style: TextStyle(fontSize: 12, color: Colors.grey)),
@@ -912,7 +986,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               const SizedBox(height: 4),
                               Switch(
                                 value: _afternoonHalfDayLeaveEnabled,
-                                onChanged: (_) => _toggleAfternoonHalfDayLeave(),
+                                onChanged: _fullDayLeaveEnabled ? null : (_) => _toggleAfternoonHalfDayLeave(),
                                 activeColor: Colors.orange,
                               ),
                               Text('13:31打卡', style: TextStyle(fontSize: 12, color: Colors.grey)),
@@ -964,6 +1038,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _getAutoClockStatusText() {
     String status = '';
     
+    // 如果整天請假已啟用，直接返回相應信息
+    if (_fullDayLeaveEnabled) {
+      return '已暫停（整天請假）';
+    }
+    
     if (_autoClockInEnabled && _autoClockOutEnabled) {
       status = '上、下班均已啟用';
     } else if (_autoClockInEnabled) {
@@ -986,7 +1065,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   
   // 取得半天假狀態文字
   String _getHalfDayLeaveStatusText() {
-    if (_morningHalfDayLeaveEnabled) {
+    if (_fullDayLeaveEnabled) {
+      return '整天請假';
+    } else if (_morningHalfDayLeaveEnabled) {
       return '上午請假 (13:00打卡)';
     } else if (_afternoonHalfDayLeaveEnabled) {
       return '下午請假 (13:31打卡)';

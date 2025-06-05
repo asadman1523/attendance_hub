@@ -182,6 +182,101 @@ void callbackDispatcher() {
         debugPrint('BackgroundTask: Today is not a workday, skipping auto-clock.');
         return Future.value(true);
       }
+      
+      // 檢查是否啟用了整天請假
+      final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
+      if (fullDayLeave) {
+        debugPrint('BackgroundTask: Full-day leave enabled, skipping auto-clock.');
+        return Future.value(true);
+      }
+      
+      // 處理半天請假的特殊打卡時間
+      final now = DateTime.now();
+      final currentHour = now.hour;
+      final currentMinute = now.minute;
+      
+      final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
+      final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+      
+      // 上午請假的自動打卡（13:00）
+      if (morningHalfDayLeave && currentHour == 13 && currentMinute == 0) {
+        // 檢查今天是否已經打卡
+        if (prefs.getBool('clockedIn_$today') ?? false) {
+          debugPrint('BackgroundTask: Already clocked in today');
+          return Future.value(true);
+        }
+        
+        // 獲取 webhook URL
+        final webhookUrl = prefs.getString('webhookUrl');
+        if (webhookUrl == null || webhookUrl.isEmpty) {
+          debugPrint('BackgroundTask: Webhook URL not configured');
+          return Future.value(false);
+        }
+        
+        // 執行半天假特殊打卡（固定13:00）
+        final specificTime = DateTime(now.year, now.month, now.day, 13, 0);
+        final formattedSpecificTime = DateFormat('HH:mm:ss').format(specificTime);
+        
+        final response = await http.post(
+          Uri.parse(webhookUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'action': 'clockIn',
+            'timestamp': '$today 13:00:00',
+            'source': 'morning_half_day_leave_service'
+          }),
+        );
+        
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          await prefs.setBool('clockedIn_$today', true);
+          await prefs.setString('clockInTime_$today', '13:00:00');
+          debugPrint('BackgroundTask: Morning half-day leave clock-in successful at 13:00:00');
+          
+          // 顯示通知
+          await _showAutoClockNotification('clockIn', '13:00:00');
+          return Future.value(true);
+        }
+      }
+      
+      // 下午請假的自動打卡（13:31）
+      if (afternoonHalfDayLeave && currentHour == 13 && currentMinute == 31) {
+        // 檢查今天是否已經打卡
+        if (prefs.getBool('clockedOut_$today') ?? false) {
+          debugPrint('BackgroundTask: Already clocked out today');
+          return Future.value(true);
+        }
+        
+        // 獲取 webhook URL
+        final webhookUrl = prefs.getString('webhookUrl');
+        if (webhookUrl == null || webhookUrl.isEmpty) {
+          debugPrint('BackgroundTask: Webhook URL not configured');
+          return Future.value(false);
+        }
+        
+        // 執行半天假特殊打卡（固定13:31）
+        final specificTime = DateTime(now.year, now.month, now.day, 13, 31);
+        final formattedSpecificTime = DateFormat('HH:mm:ss').format(specificTime);
+        
+        final response = await http.post(
+          Uri.parse(webhookUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'action': 'clockOut',
+            'timestamp': '$today 13:31:00',
+            'source': 'afternoon_half_day_leave_service'
+          }),
+        );
+        
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          await prefs.setBool('clockedOut_$today', true);
+          await prefs.setString('clockOutTime_$today', '13:31:00');
+          debugPrint('BackgroundTask: Afternoon half-day leave clock-out successful at 13:31:00');
+          
+          // 顯示通知
+          await _showAutoClockNotification('clockOut', '13:31:00');
+          return Future.value(true);
+        }
+      }
 
       if (taskName == clockInitializeTaskName) {
         // 初始化任務，用於設置每日自動打卡的排程
@@ -231,6 +326,23 @@ void callbackDispatcher() {
 Future<bool> _performClocking(String webhookUrl, String action, String today, SharedPreferences prefs) async {
   try {
     final now = DateTime.now();
+    
+    // 檢查半天假設定
+    final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
+    final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+    
+    // 如果是上班打卡且設置了上午請假，則跳過
+    if (action == 'clockIn' && morningHalfDayLeave) {
+      debugPrint('BackgroundTask: Morning half-day leave enabled, skipping auto clock-in.');
+      return true; // 返回成功，但不執行打卡
+    }
+    
+    // 如果是下班打卡且設置了下午請假，則跳過
+    if (action == 'clockOut' && afternoonHalfDayLeave) {
+      debugPrint('BackgroundTask: Afternoon half-day leave enabled, skipping auto clock-out.');
+      return true; // 返回成功，但不執行打卡
+    }
+    
     final formattedTime = DateFormat('HH:mm:ss').format(now);
     
     final response = await http.post(

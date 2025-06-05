@@ -253,6 +253,14 @@ class AutoClockService {
     // Check if half-day leave is enabled for today
     final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
     final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+    // 檢查整天請假狀態
+    final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
+    
+    // 如果啟用了整天請假，跳過所有打卡操作
+    if (fullDayLeave) {
+      debugPrint('AutoClockService: Full-day leave enabled, skipping all clock operations.');
+      return;
+    }
     
     // 處理上午請假的自動打卡 (13:00)
     if (morningHalfDayLeave && 
@@ -298,6 +306,7 @@ class AutoClockService {
         currentHour == clockInHour && 
         currentMinute == clockInMinute &&
         !morningHalfDayLeave &&  // Skip if morning half-day leave is enabled
+        !fullDayLeave &&  // Skip if full-day leave is enabled
         !(prefs.getBool('clockedIn_$today') ?? false)) {
       final success = await _triggerWebhook('clockIn');
       if (success) {
@@ -310,6 +319,7 @@ class AutoClockService {
         currentHour == clockOutHour && 
         currentMinute == clockOutMinute &&
         !afternoonHalfDayLeave &&  // Skip if afternoon half-day leave is enabled
+        !fullDayLeave &&  // Skip if full-day leave is enabled
         !(prefs.getBool('clockedOut_$today') ?? false)) {
       final success = await _triggerWebhook('clockOut');
       if (success) {
