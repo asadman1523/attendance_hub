@@ -58,6 +58,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _autoClockInEnabled = false;
   bool _autoClockOutEnabled = false;
   String _weekday = '';
+  bool _hasWebhook = false;
+  String? _notificationInTime;
+  String? _notificationOutTime;
 
   @override
   void initState() {
@@ -120,6 +123,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Get auto-clock settings
     final autoClockSettings = await AutoClockService().getAutoClockSettings();
     
+    // Get notification settings
+    final notificationSettings = await _notificationService.getNotificationTimes();
+    
+    // Check webhook configuration
+    final webhookUrl = prefs.getString('webhookUrl') ?? '';
+    
     setState(() {
       _clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
       _clockedOutToday = prefs.getBool('clockedOut_$today') ?? false;
@@ -127,6 +136,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _clockOutTime = prefs.getString('clockOutTime_$today');
       _autoClockInEnabled = autoClockSettings['clockInEnabled'];
       _autoClockOutEnabled = autoClockSettings['clockOutEnabled'];
+      _hasWebhook = webhookUrl.isNotEmpty;
+      _notificationInTime = '${notificationSettings['clockInHour'].toString().padLeft(2, '0')}:${notificationSettings['clockInMinute'].toString().padLeft(2, '0')}';
+      _notificationOutTime = '${notificationSettings['clockOutHour'].toString().padLeft(2, '0')}:${notificationSettings['clockOutMinute'].toString().padLeft(2, '0')}';
     });
   }
   
@@ -378,7 +390,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   context,
                   MaterialPageRoute(
                       builder: (context) => const NotificationSettingsPage()),
-                ).then((_) => _scheduleNotifications());
+                ).then((_) {
+                  _scheduleNotifications();
+                  _initAttendanceStatus(); // Refresh all status info
+                });
               } else if (value == 'auto_clock') {
                 Navigator.push(
                   context,
@@ -510,6 +525,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                               ? Colors.green 
                               : Colors.grey,
                           fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  // 提醒設置資訊
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.notifications,
+                        color: Colors.blue,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '提醒：上班 $_notificationInTime / 下班 $_notificationOutTime',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            color: Colors.blue,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  // Webhook 狀態資訊
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.link,
+                        color: _hasWebhook ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Webhook：${_hasWebhook ? '已配置' : '未配置'}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: _hasWebhook ? Colors.green : Colors.red,
                         ),
                       ),
                     ],
@@ -686,6 +744,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('設置已保存')),
       );
+      Navigator.of(context).pop();
     }
   }
 
