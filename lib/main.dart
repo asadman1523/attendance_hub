@@ -55,6 +55,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final NotificationService _notificationService = NotificationService();
   bool _isWorkday = true;
   bool _isBigWeekend = false;
+  bool _autoClockInEnabled = false;
+  bool _autoClockOutEnabled = false;
+  String _weekday = '';
 
   @override
   void initState() {
@@ -106,15 +109,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _initAttendanceStatus() async {
     final prefs = await SharedPreferences.getInstance();
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final now = DateTime.now();
+    final today = DateFormat('yyyy-MM-dd').format(now);
+    
+    // Get weekday information
+    _setWeekday(now);
 
     await _checkWorkdayStatus();
 
+    // Get auto-clock settings
+    final autoClockSettings = await AutoClockService().getAutoClockSettings();
+    
     setState(() {
       _clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
       _clockedOutToday = prefs.getBool('clockedOut_$today') ?? false;
       _clockInTime = prefs.getString('clockInTime_$today');
       _clockOutTime = prefs.getString('clockOutTime_$today');
+      _autoClockInEnabled = autoClockSettings['clockInEnabled'];
+      _autoClockOutEnabled = autoClockSettings['clockOutEnabled'];
+    });
+  }
+  
+  void _setWeekday(DateTime now) {
+    const List<String> weekdays = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+    setState(() {
+      _weekday = weekdays[now.weekday % 7]; // weekday is 1-7, where 1 is Monday
     });
   }
 
@@ -365,7 +384,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   context,
                   MaterialPageRoute(
                       builder: (context) => const AutoClockSettingsPage()),
-                );
+                ).then((_) => _initAttendanceStatus());
               }
             },
             itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
@@ -432,10 +451,23 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '今天：${DateFormat('yyyy年MM月dd日').format(DateTime.now())}',
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.bold),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '今天：${DateFormat('yyyy年MM月dd日').format(DateTime.now())}',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        _weekday,
+                        style: const TextStyle(
+                          fontSize: 18, 
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                   Row(
@@ -458,6 +490,29 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   Text(
                     '本週為${_isBigWeekend ? '大' : '小'}週末 (${_isBigWeekend ? '週一、二休息' : '僅週一休息'})',
                     style: const TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  // 自動打卡狀態資訊
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.auto_mode,
+                        color: (_autoClockInEnabled || _autoClockOutEnabled) 
+                            ? Colors.green 
+                            : Colors.grey,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '自動打卡：${_getAutoClockStatusText()}',
+                        style: TextStyle(
+                          color: (_autoClockInEnabled || _autoClockOutEnabled) 
+                              ? Colors.green 
+                              : Colors.grey,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -573,6 +628,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+  
+  // 取得自動打卡狀態文字
+  String _getAutoClockStatusText() {
+    if (_autoClockInEnabled && _autoClockOutEnabled) {
+      return '上、下班均已啟用';
+    } else if (_autoClockInEnabled) {
+      return '上班已啟用';
+    } else if (_autoClockOutEnabled) {
+      return '下班已啟用';
+    } else {
+      return '未啟用';
+    }
   }
 }
 
