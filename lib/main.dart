@@ -61,6 +61,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _hasWebhook = false;
   String? _notificationInTime;
   String? _notificationOutTime;
+  // Add half-day leave state variables
+  bool _morningHalfDayLeaveEnabled = false;
+  bool _afternoonHalfDayLeaveEnabled = false;
 
   @override
   void initState() {
@@ -129,6 +132,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // Check webhook configuration
     final webhookUrl = prefs.getString('webhookUrl') ?? '';
     
+    // Get half-day leave settings
+    final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
+    final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+    
     setState(() {
       _clockedInToday = prefs.getBool('clockedIn_$today') ?? false;
       _clockedOutToday = prefs.getBool('clockedOut_$today') ?? false;
@@ -139,6 +146,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _hasWebhook = webhookUrl.isNotEmpty;
       _notificationInTime = '${notificationSettings['clockInHour'].toString().padLeft(2, '0')}:${notificationSettings['clockInMinute'].toString().padLeft(2, '0')}';
       _notificationOutTime = '${notificationSettings['clockOutHour'].toString().padLeft(2, '0')}:${notificationSettings['clockOutMinute'].toString().padLeft(2, '0')}';
+      _morningHalfDayLeaveEnabled = morningHalfDayLeave;
+      _afternoonHalfDayLeaveEnabled = afternoonHalfDayLeave;
     });
   }
   
@@ -337,6 +346,170 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  // Toggle morning half-day leave
+  Future<void> _toggleMorningHalfDayLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final now = DateTime.now();
+    
+    // 檢查時間，只有在13:00前才能啟用上午請假
+    if (now.hour >= 13 && !_morningHalfDayLeaveEnabled) {
+      _showMessage('已超過上午請假的時間限制（限13:00前啟用）');
+      return;
+    }
+    
+    // Cannot enable both types of half-day leave simultaneously
+    if (_afternoonHalfDayLeaveEnabled && !_morningHalfDayLeaveEnabled) {
+      _showMessage('不能同時啟用上午和下午請假');
+      return;
+    }
+    
+    final newValue = !_morningHalfDayLeaveEnabled;
+    
+    // 不再實際停用自動打卡，只顯示提示訊息
+    if (newValue) {
+      _showMessage('已設定上午請假（13:00打卡）。注意：上午請假當天，自動上班打卡將暫時失效');
+    } else {
+      _showMessage('已取消上午請假設定');
+    }
+    
+    await prefs.setBool('morningHalfDayLeave_$today', newValue);
+    
+    setState(() {
+      _morningHalfDayLeaveEnabled = newValue;
+    });
+  }
+  
+  // Toggle afternoon half-day leave
+  Future<void> _toggleAfternoonHalfDayLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final now = DateTime.now();
+    
+    // 檢查時間，只有在13:31前才能啟用下午請假
+    if ((now.hour > 13 || (now.hour == 13 && now.minute >= 31)) && !_afternoonHalfDayLeaveEnabled) {
+      _showMessage('已超過下午請假的時間限制（限13:31前啟用）');
+      return;
+    }
+    
+    // Cannot enable both types of half-day leave simultaneously
+    if (_morningHalfDayLeaveEnabled && !_afternoonHalfDayLeaveEnabled) {
+      _showMessage('不能同時啟用上午和下午請假');
+      return;
+    }
+    
+    final newValue = !_afternoonHalfDayLeaveEnabled;
+    
+    // 不再實際停用自動打卡，只顯示提示訊息
+    if (newValue) {
+      _showMessage('已設定下午請假（13:31打卡）。注意：下午請假當天，自動下班打卡將暫時失效');
+    } else {
+      _showMessage('已取消下午請假設定');
+    }
+    
+    await prefs.setBool('afternoonHalfDayLeave_$today', newValue);
+    
+    setState(() {
+      _afternoonHalfDayLeaveEnabled = newValue;
+    });
+  }
+  
+  // Half-day leave clock in (13:00)
+  Future<void> _halfDayLeaveClockIn() async {
+    if (!_morningHalfDayLeaveEnabled) {
+      _showMessage('上午請假模式未啟用');
+      return;
+    }
+    
+    if (_clockedInToday) {
+      _showMessage('您今天已經打過上班卡了');
+      return;
+    }
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final webhookUrl = prefs.getString('webhookUrl') ?? '';
+      if (webhookUrl.isEmpty) {
+        _showMessage('請先在設置中配置打卡的 Webhook URL');
+        return;
+      }
+      
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final response = await http.post(
+        Uri.parse(webhookUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'action': 'clockIn',
+          'timestamp': '$today 13:00:00'  // Set time to 13:00
+        }),
+      );
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await prefs.setBool('clockedIn_$today', true);
+        await prefs.setString('clockInTime_$today', '13:00:00');
+        
+        setState(() {
+          _clockedInToday = true;
+          _clockInTime = '13:00:00';
+        });
+        
+        _showMessage('上午請假，13:00 上班打卡成功');
+      } else {
+        _showErrorDialog('上班打卡失敗', response.body);
+      }
+    } catch (e) {
+      _showMessage('發生錯誤：$e');
+    }
+  }
+  
+  // Half-day leave clock out (13:31)
+  Future<void> _halfDayLeaveClockOut() async {
+    if (!_afternoonHalfDayLeaveEnabled) {
+      _showMessage('下午請假模式未啟用');
+      return;
+    }
+    
+    if (_clockedOutToday) {
+      _showMessage('您今天已經打過下班卡了');
+      return;
+    }
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final webhookUrl = prefs.getString('webhookUrl') ?? '';
+      if (webhookUrl.isEmpty) {
+        _showMessage('請先在設置中配置打卡的 Webhook URL');
+        return;
+      }
+      
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final response = await http.post(
+        Uri.parse(webhookUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'action': 'clockOut',
+          'timestamp': '$today 13:31:00'  // Set time to 13:31
+        }),
+      );
+      
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await prefs.setBool('clockedOut_$today', true);
+        await prefs.setString('clockOutTime_$today', '13:31:00');
+        
+        setState(() {
+          _clockedOutToday = true;
+          _clockOutTime = '13:31:00';
+        });
+        
+        _showMessage('下午請假，13:31 下班打卡成功');
+      } else {
+        _showErrorDialog('下班打卡失敗', response.body);
+      }
+    } catch (e) {
+      _showMessage('發生錯誤：$e');
+    }
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -399,7 +572,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   context,
                   MaterialPageRoute(
                       builder: (context) => const AutoClockSettingsPage()),
-                ).then((_) => _initAttendanceStatus());
+                ).then((result) {
+                  if (result == true) {
+                    _initAttendanceStatus(); // 僅在設置變更時重新加載
+                  }
+                });
               }
             },
             itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
@@ -455,247 +632,335 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   // 提取主內容為可重用的方法
   Widget _buildMainContent() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '今天：${DateFormat('yyyy年MM月dd日').format(DateTime.now())}',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        _weekday,
-                        style: const TextStyle(
-                          fontSize: 18, 
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
+    return SingleChildScrollView(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '今天：${DateFormat('yyyy年MM月dd日').format(DateTime.now())}',
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(
-                        _isWorkday ? Icons.work : Icons.weekend,
-                        color: _isWorkday ? Colors.blue : Colors.orange,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _isWorkday ? '今天是工作日' : '今天是休息日',
-                        style: TextStyle(
+                        Text(
+                          _weekday,
+                          style: const TextStyle(
+                            fontSize: 18, 
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(
+                          _isWorkday ? Icons.work : Icons.weekend,
                           color: _isWorkday ? Colors.blue : Colors.orange,
-                          fontWeight: FontWeight.bold,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '本週為${_isBigWeekend ? '大' : '小'}週末 (${_isBigWeekend ? '週一、二休息' : '僅週一休息'})',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 16),
-                  // 自動打卡狀態資訊
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.auto_mode,
-                        color: (_autoClockInEnabled || _autoClockOutEnabled) 
-                            ? Colors.green 
-                            : Colors.grey,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '自動打卡：${_getAutoClockStatusText()}',
-                        style: TextStyle(
+                        const SizedBox(width: 8),
+                        Text(
+                          _isWorkday ? '今天是工作日' : '今天是休息日',
+                          style: TextStyle(
+                            color: _isWorkday ? Colors.blue : Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '本週為${_isBigWeekend ? '大' : '小'}週末 (${_isBigWeekend ? '週一、二休息' : '僅週一休息'})',
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 16),
+                    // 自動打卡狀態資訊
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.auto_mode,
                           color: (_autoClockInEnabled || _autoClockOutEnabled) 
                               ? Colors.green 
                               : Colors.grey,
-                          fontSize: 14,
+                          size: 20,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  
-                  // 提醒設置資訊
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.notifications,
-                        color: Colors.blue,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '提醒：上班 $_notificationInTime / 下班 $_notificationOutTime',
-                          style: const TextStyle(
+                        const SizedBox(width: 8),
+                        Text(
+                          '自動打卡：${_getAutoClockStatusText()}',
+                          style: TextStyle(
+                            color: (_autoClockInEnabled || _autoClockOutEnabled) 
+                                ? Colors.green 
+                                : Colors.grey,
                             fontSize: 14,
-                            color: Colors.blue,
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  
-                  // Webhook 狀態資訊
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.link,
-                        color: _hasWebhook ? Colors.green : Colors.red,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Webhook：${_hasWebhook ? '已配置' : '未配置'}',
-                        style: TextStyle(
-                          fontSize: 14,
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    
+                    // 半天假打卡狀態資訊
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.time_to_leave,
+                          color: (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled) 
+                              ? Colors.orange 
+                              : Colors.grey,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '半天假：${_getHalfDayLeaveStatusText()}',
+                          style: TextStyle(
+                            color: (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled) 
+                                ? Colors.orange 
+                                : Colors.grey,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    
+                    // 提醒設置資訊
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.notifications,
+                          color: Colors.blue,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '提醒：上班 $_notificationInTime / 下班 $_notificationOutTime',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.blue,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    
+                    // Webhook 狀態資訊
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.link,
                           color: _hasWebhook ? Colors.green : Colors.red,
+                          size: 20,
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('上班打卡: ${_clockInTime ?? '尚未打卡'}'),
-                      Row(
-                        children: [
-                          if (_clockedInToday)
-                            GestureDetector(
-                              onTap: _clearClockInRecord,
-                              child: Container(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 8),
-                                child: const Icon(Icons.delete_outline,
-                                    color: Colors.redAccent, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Webhook：${_hasWebhook ? '已配置' : '未配置'}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: _hasWebhook ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('上班打卡: ${_clockInTime ?? '尚未打卡'}'),
+                        Row(
+                          children: [
+                            if (_clockedInToday)
+                              GestureDetector(
+                                onTap: _clearClockInRecord,
+                                child: Container(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  child: const Icon(Icons.delete_outline,
+                                      color: Colors.redAccent, size: 20),
+                                ),
                               ),
-                            ),
-                          const SizedBox(width: 4),
-                          _clockedInToday
-                              ? const Icon(Icons.check_circle,
-                                  color: Colors.green)
-                              : const Icon(Icons.pending, color: Colors.orange),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('下班打卡: ${_clockOutTime ?? '尚未打卡'}'),
-                      Row(
-                        children: [
-                          if (_clockedOutToday)
-                            GestureDetector(
-                              onTap: _clearClockOutRecord,
-                              child: Container(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 8),
-                                child: const Icon(Icons.delete_outline,
-                                    color: Colors.redAccent, size: 20),
+                            const SizedBox(width: 4),
+                            _clockedInToday
+                                ? const Icon(Icons.check_circle,
+                                    color: Colors.green)
+                                : const Icon(Icons.pending, color: Colors.orange),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('下班打卡: ${_clockOutTime ?? '尚未打卡'}'),
+                        Row(
+                          children: [
+                            if (_clockedOutToday)
+                              GestureDetector(
+                                onTap: _clearClockOutRecord,
+                                child: Container(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
+                                  child: const Icon(Icons.delete_outline,
+                                      color: Colors.redAccent, size: 20),
+                                ),
                               ),
-                            ),
-                          const SizedBox(width: 4),
-                          _clockedOutToday
-                              ? const Icon(Icons.check_circle,
-                                  color: Colors.green)
-                              : const Icon(Icons.pending, color: Colors.orange),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
+                            const SizedBox(width: 4),
+                            _clockedOutToday
+                                ? const Icon(Icons.check_circle,
+                                    color: Colors.green)
+                                : const Icon(Icons.pending, color: Colors.orange),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 32),
-          ElevatedButton.icon(
-            onPressed: !_isWorkday || _clockedInToday ? null : _clockIn,
-            icon: const Icon(Icons.login),
-            label: const Text('上班打卡'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.all(16),
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: Colors.grey.shade300,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: !_isWorkday || _clockedOutToday ? null : _clockOut,
-            icon: const Icon(Icons.logout),
-            label: const Text('下班打卡'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.all(16),
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: Colors.grey.shade300,
-            ),
-          ),
-          // 添加清除按鈕區域
-          if (_clockedInToday || _clockedOutToday) ...[
             const SizedBox(height: 24),
-            // const Divider(),
-            // const SizedBox(height: 8),
-            // Row(
-            //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            //   children: [
-            //     if (_clockedInToday)
-            //       ElevatedButton.icon(
-            //         onPressed: _clearClockInRecord,
-            //         icon: const Icon(Icons.delete),
-            //         label: const Text('清除上班打卡'),
-            //         style: ElevatedButton.styleFrom(
-            //           backgroundColor: Colors.red.shade50,
-            //           foregroundColor: Colors.red,
-            //         ),
-            //       ),
-            //     if (_clockedOutToday)
-            //       ElevatedButton.icon(
-            //         onPressed: _clearClockOutRecord,
-            //         icon: const Icon(Icons.delete),
-            //         label: const Text('清除下班打卡'),
-            //         style: ElevatedButton.styleFrom(
-            //           backgroundColor: Colors.red.shade50,
-            //           foregroundColor: Colors.red,
-            //         ),
-            //       ),
-            //   ],
-            // ),
-          ]
-        ],
+            
+            // 半天假設定區域
+            if (_isWorkday) ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '半天假設定',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        '啟用後將自動在特定時間打卡，且優先於一般自動打卡設定',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                      if (_morningHalfDayLeaveEnabled || _afternoonHalfDayLeaveEnabled) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _morningHalfDayLeaveEnabled 
+                              ? '今天上班將於 13:00 自動打卡' 
+                              : '今天下班將於 13:31 自動打卡',
+                          style: const TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          // 上午請假開關
+                          Column(
+                            children: [
+                              const Text('上午請假'),
+                              const SizedBox(height: 4),
+                              Switch(
+                                value: _morningHalfDayLeaveEnabled,
+                                onChanged: (_) => _toggleMorningHalfDayLeave(),
+                                activeColor: Colors.orange,
+                              ),
+                              Text('13:00打卡', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                          const SizedBox(width: 8),
+                          // 下午請假開關
+                          Column(
+                            children: [
+                              const Text('下午請假'),
+                              const SizedBox(height: 4),
+                              Switch(
+                                value: _afternoonHalfDayLeaveEnabled,
+                                onChanged: (_) => _toggleAfternoonHalfDayLeave(),
+                                activeColor: Colors.orange,
+                              ),
+                              Text('13:31打卡', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            
+            ElevatedButton.icon(
+              onPressed: !_isWorkday || _clockedInToday ? null : _clockIn,
+              icon: const Icon(Icons.login),
+              label: const Text('上班打卡'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.all(16),
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade300,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: !_isWorkday || _clockedOutToday ? null : _clockOut,
+              icon: const Icon(Icons.logout),
+              label: const Text('下班打卡'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.all(16),
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade300,
+              ),
+            ),
+            // 添加清除按鈕區域
+            if (_clockedInToday || _clockedOutToday) ...[
+              const SizedBox(height: 24),
+            ]
+          ],
+        ),
       ),
     );
   }
   
   // 取得自動打卡狀態文字
   String _getAutoClockStatusText() {
+    String status = '';
+    
     if (_autoClockInEnabled && _autoClockOutEnabled) {
-      return '上、下班均已啟用';
+      status = '上、下班均已啟用';
     } else if (_autoClockInEnabled) {
-      return '上班已啟用';
+      status = '上班已啟用';
     } else if (_autoClockOutEnabled) {
-      return '下班已啟用';
+      status = '下班已啟用';
+    } else {
+      status = '未啟用';
+    }
+    
+    // 如果有半天假設定，附加提示訊息
+    if (_morningHalfDayLeaveEnabled && _autoClockInEnabled) {
+      status += ' (上班請假模式打卡)';
+    } else if (_afternoonHalfDayLeaveEnabled && _autoClockOutEnabled) {
+      status += ' (下班請假模式打卡)';
+    }
+    
+    return status;
+  }
+  
+  // 取得半天假狀態文字
+  String _getHalfDayLeaveStatusText() {
+    if (_morningHalfDayLeaveEnabled) {
+      return '上午請假 (13:00打卡)';
+    } else if (_afternoonHalfDayLeaveEnabled) {
+      return '下午請假 (13:31打卡)';
     } else {
       return '未啟用';
     }

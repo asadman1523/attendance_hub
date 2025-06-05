@@ -63,7 +63,7 @@ class _AutoClockSettingsPageState extends State<AutoClockSettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('自動打卡設置已保存')),
       );
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
     }
   }
   

@@ -178,11 +178,25 @@ class AutoClockService {
         '系統已於 $time 自動完成上班打卡',
         notificationDetails,
       );
-    } else {
+    } else if (action == 'clockOut') {
       await _notificationsPlugin.show(
         autoClockOutNotificationId,
         '自動下班打卡成功',
         '系統已於 $time 自動完成下班打卡',
+        notificationDetails,
+      );
+    } else if (action == '上午請假打卡') {
+      await _notificationsPlugin.show(
+        autoClockInNotificationId,
+        '上午請假打卡成功',
+        '系統已於 $time 自動完成上午請假打卡 (13:00)',
+        notificationDetails,
+      );
+    } else if (action == '下午請假打卡') {
+      await _notificationsPlugin.show(
+        autoClockOutNotificationId,
+        '下午請假打卡成功',
+        '系統已於 $time 自動完成下午請假打卡 (13:31)',
         notificationDetails,
       );
     }
@@ -236,10 +250,54 @@ class AutoClockService {
     final currentHour = now.hour;
     final currentMinute = now.minute;
 
+    // Check if half-day leave is enabled for today
+    final morningHalfDayLeave = prefs.getBool('morningHalfDayLeave_$today') ?? false;
+    final afternoonHalfDayLeave = prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
+    
+    // 處理上午請假的自動打卡 (13:00)
+    if (morningHalfDayLeave && 
+        currentHour == 13 && 
+        currentMinute == 0 &&
+        !(prefs.getBool('clockedIn_$today') ?? false)) {
+      debugPrint('AutoClockService: 執行上午請假自動打卡 (13:00)');
+      final success = await _triggerWebhook('clockIn', '$today 13:00:00');
+      if (success) {
+        await prefs.setBool('clockedIn_$today', true);
+        await prefs.setString('clockInTime_$today', '13:00:00');
+        
+        // 顯示通知
+        final now = DateFormat('HH:mm:ss').format(DateTime.now());
+        _showAutoClockNotification('上午請假打卡', now);
+        
+        debugPrint('AutoClockService: 上午請假自動打卡成功 (13:00)');
+      }
+    }
+    
+    // 處理下午請假的自動打卡 (13:31)
+    if (afternoonHalfDayLeave && 
+        currentHour == 13 && 
+        currentMinute == 31 &&
+        !(prefs.getBool('clockedOut_$today') ?? false)) {
+      debugPrint('AutoClockService: 執行下午請假自動打卡 (13:31)');
+      final success = await _triggerWebhook('clockOut', '$today 13:31:00');
+      if (success) {
+        await prefs.setBool('clockedOut_$today', true);
+        await prefs.setString('clockOutTime_$today', '13:31:00');
+        
+        // 顯示通知
+        final now = DateFormat('HH:mm:ss').format(DateTime.now());
+        _showAutoClockNotification('下午請假打卡', now);
+        
+        debugPrint('AutoClockService: 下午請假自動打卡成功 (13:31)');
+      }
+    }
+    
+    // 處理正常的自動打卡
     // Check if it's time to clock in
     if (autoClockInEnabled && 
         currentHour == clockInHour && 
         currentMinute == clockInMinute &&
+        !morningHalfDayLeave &&  // Skip if morning half-day leave is enabled
         !(prefs.getBool('clockedIn_$today') ?? false)) {
       final success = await _triggerWebhook('clockIn');
       if (success) {
@@ -251,74 +309,80 @@ class AutoClockService {
     if (autoClockOutEnabled && 
         currentHour == clockOutHour && 
         currentMinute == clockOutMinute &&
+        !afternoonHalfDayLeave &&  // Skip if afternoon half-day leave is enabled
         !(prefs.getBool('clockedOut_$today') ?? false)) {
       final success = await _triggerWebhook('clockOut');
       if (success) {
         debugPrint('AutoClockService: Auto clock-out triggered and marked at $clockOutHour:$clockOutMinute');
       }
     }
+
+    // Update the last checked date
+    await prefs.setString(lastCheckedDateKey, today);
   }
 
-  Future<bool> _triggerWebhook(String action) async {
-    final prefs = await SharedPreferences.getInstance();
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final webhookUrl = prefs.getString('webhookUrl');
-    
-    if (webhookUrl == null || webhookUrl.isEmpty) {
-      debugPrint('AutoClockService: Webhook URL not configured');
-      return false;
-    }
-
-    // Check if already clocked in/out today
-    if (action == 'clockIn' && (prefs.getBool('clockedIn_$today') ?? false)) {
-      debugPrint('AutoClockService: Already clocked in today');
-      return false;
-    }
-    if (action == 'clockOut' && (prefs.getBool('clockedOut_$today') ?? false)) {
-      debugPrint('AutoClockService: Already clocked out today');
-      return false;
-    }
-
+  Future<bool> _triggerWebhook(String action, [String? customTimestamp]) async {
     try {
-      final now = DateTime.now();
-      final formattedTime = DateFormat('HH:mm:ss').format(now);
+      final prefs = await SharedPreferences.getInstance();
+      final webhookUrl = prefs.getString('webhookUrl') ?? '';
+      
+      if (webhookUrl.isEmpty) {
+        debugPrint('AutoClockService: No webhook URL configured, cannot trigger auto-clock');
+        return false;
+      }
+      
+      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      
+      // 構建請求體
+      Map<String, dynamic> body;
+      if (customTimestamp != null) {
+        body = {
+          'action': action,
+          'timestamp': customTimestamp
+        };
+      } else {
+        body = {
+          'action': action,
+          'timestamp': DateTime.now().toIso8601String()
+        };
+      }
       
       final response = await http.post(
         Uri.parse(webhookUrl),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'action': action,
-          'timestamp': now.toIso8601String(),
-          'source': 'auto_clock_service'
-        }),
+        body: jsonEncode(body),
       );
-
+      
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        // 成功打卡後設置標記
+        final now = DateFormat('HH:mm:ss').format(DateTime.now());
+        
+        // 更新打卡狀態
         if (action == 'clockIn') {
-          // 標記今天已經上班打卡
           await prefs.setBool('clockedIn_$today', true);
-          await prefs.setString('clockInTime_$today', formattedTime);
+          if (customTimestamp == null) {
+            await prefs.setString('clockInTime_$today', now);
+          }
           
           // 顯示通知
-          await _showAutoClockNotification('clockIn', formattedTime);
-          debugPrint('AutoClockService: ✅ Clock-in successful and marked at $formattedTime');
+          _showAutoClockNotification('clockIn', now);
         } else {
-          // 標記今天已經下班打卡
           await prefs.setBool('clockedOut_$today', true);
-          await prefs.setString('clockOutTime_$today', formattedTime);
+          if (customTimestamp == null) {
+            await prefs.setString('clockOutTime_$today', now);
+          }
           
           // 顯示通知
-          await _showAutoClockNotification('clockOut', formattedTime);
-          debugPrint('AutoClockService: ✅ Clock-out successful and marked at $formattedTime');
+          _showAutoClockNotification('clockOut', now);
         }
+        
         return true;
       } else {
-        debugPrint('AutoClockService: ❌ Webhook failed: ${response.body}');
+        debugPrint('AutoClockService: Webhook call failed with status ${response.statusCode}');
+        debugPrint('Response: ${response.body}');
         return false;
       }
     } catch (e) {
-      debugPrint('AutoClockService: ❌ Error triggering webhook: $e');
+      debugPrint('AutoClockService: Error triggering webhook: $e');
       return false;
     }
   }
@@ -349,9 +413,15 @@ class AutoClockService {
   // Get automatic clock time settings
   Future<Map<String, dynamic>> getAutoClockSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    
+    // 讀取基本設定，不再考慮半天假的狀態
+    final clockInEnabled = prefs.getBool(autoClockInEnabledKey) ?? false;
+    final clockOutEnabled = prefs.getBool(autoClockOutEnabledKey) ?? false;
+    
     return {
-      'clockInEnabled': prefs.getBool(autoClockInEnabledKey) ?? false,
-      'clockOutEnabled': prefs.getBool(autoClockOutEnabledKey) ?? false,
+      'clockInEnabled': clockInEnabled,
+      'clockOutEnabled': clockOutEnabled,
       'clockInHour': prefs.getInt(autoClockInHourKey) ?? defaultClockInHour,
       'clockInMinute': prefs.getInt(autoClockInMinuteKey) ?? defaultClockInMinute,
       'clockOutHour': prefs.getInt(autoClockOutHourKey) ?? defaultClockOutHour,
@@ -383,5 +453,34 @@ class AutoClockService {
     final clockOutTime = prefs.getString('clockOutTime_$today');
     
     debugPrint('AutoClockService: 檢查今日狀態 - 上班打卡: $clockedInToday (${clockInTime ?? '無時間'}), 下班打卡: $clockedOutToday (${clockOutTime ?? '無時間'})');
+  }
+
+  // Disable auto clock in (for half-day leave)
+  Future<void> disableAutoClockIn() async {
+    // 不再實際停用自動打卡設置
+    // final prefs = await SharedPreferences.getInstance();
+    // await prefs.setBool(autoClockInEnabledKey, false);
+    debugPrint('AutoClockService: Auto clock-in will be overridden by half-day leave');
+  }
+  
+  // Disable auto clock out (for half-day leave)
+  Future<void> disableAutoClockOut() async {
+    // 不再實際停用自動打卡設置
+    // final prefs = await SharedPreferences.getInstance();
+    // await prefs.setBool(autoClockOutEnabledKey, false);
+    debugPrint('AutoClockService: Auto clock-out will be overridden by half-day leave');
+  }
+
+  // Check if clocking should be skipped due to half-day leave
+  Future<bool> shouldSkipClockInDueToLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    return prefs.getBool('morningHalfDayLeave_$today') ?? false;
+  }
+  
+  Future<bool> shouldSkipClockOutDueToLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    return prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
   }
 } 
