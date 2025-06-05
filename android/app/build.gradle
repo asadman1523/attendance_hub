@@ -64,7 +64,7 @@ android {
 
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'  // 添加 desugaring 依賴
-    // 可能需要添加 WindowManager 依賴，以解決在 Android 12L+ 上的可能崩潰問題
+    implementation 'androidx.work:work-runtime-ktx:2.8.1'
     implementation 'androidx.window:window:1.2.0'
     implementation 'androidx.window:window-java:1.2.0'
 }
