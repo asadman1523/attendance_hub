@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -64,6 +65,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // Add half-day leave state variables
   bool _morningHalfDayLeaveEnabled = false;
   bool _afternoonHalfDayLeaveEnabled = false;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -74,10 +76,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Schedule notifications when the app starts
     _scheduleNotifications();
+    
+    // 添加定期刷新機制
+    _startPeriodicRefresh();
   }
 
   @override
   void dispose() {
+    // 取消定時器
+    _refreshTimer?.cancel();
+    
     // 取消註冊應用生命週期觀察者
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -88,11 +96,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     // 當應用從背景返回前台時重新加載狀態
     if (state == AppLifecycleState.resumed) {
       debugPrint('App resumed from background, reloading attendance status');
+      
       // 重新載入打卡狀態
       setState(() {
         // 使用新的Future更新_initFuture
         _initFuture = _initAttendanceStatus();
       });
+      
+      // 重新啟動定期刷新
+      _startPeriodicRefresh();
+    } else if (state == AppLifecycleState.paused) {
+      // 應用進入背景時，可以選擇性地停止定時器以節省資源
+      _refreshTimer?.cancel();
+      debugPrint('App paused, stopping refresh timer');
     }
   }
 
@@ -114,7 +130,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _initAttendanceStatus() async {
-    final prefs = await SharedPreferences.getInstance();
+    // 嘗試重新加載 SharedPreferences
+    final prefs = await SharedPreferences.getInstance()..reload();
+    
+    // 在某些平台上，我們需要強制重新載入數據
+    try {
+      // 檢查是否有 reload 方法可用（較新版本的 shared_preferences 支持）
+      if (prefs.toString().contains('reload')) {
+        // 使用反射調用 reload 方法，強制重新從存儲讀取
+        await (prefs as dynamic).reload();
+      }
+    } catch (e) {
+      debugPrint('無法重新載入 SharedPreferences: $e');
+    }
+    
     final now = DateTime.now();
     final today = DateFormat('yyyy-MM-dd').format(now);
     
@@ -964,6 +993,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else {
       return '未啟用';
     }
+  }
+
+  // 啟動定期刷新
+  void _startPeriodicRefresh() {
+    // 取消現有定時器（如果有）
+    _refreshTimer?.cancel();
+    
+    // 建立新定時器，每30秒刷新一次
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) {
+        debugPrint('定期刷新打卡狀態');
+        _initAttendanceStatus();
+      }
+    });
   }
 }
 
