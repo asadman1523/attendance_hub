@@ -59,6 +59,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('通知設置已保存')),
       );
+      Navigator.of(context).pop();
     }
   }
 
