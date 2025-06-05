@@ -756,41 +756,69 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Webhook URL 設置',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '請輸入用於打卡的 webhook URL',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _webhookController,
-                    decoration: const InputDecoration(
-                      labelText: 'Webhook URL',
-                      border: OutlineInputBorder(),
-                      hintText: 'https://example.com/webhook',
+          : SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Webhook URL 設置',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    keyboardType: TextInputType.url,
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: _saveSettings,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.all(16),
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
+                    const SizedBox(height: 8),
+                    const Text(
+                      '請輸入用於打卡的 webhook URL',
+                      style: TextStyle(color: Colors.grey),
                     ),
-                    child: const Text('保存設置'),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _webhookController,
+                      decoration: const InputDecoration(
+                        labelText: 'Webhook URL',
+                        border: OutlineInputBorder(),
+                        hintText: 'https://example.com/webhook',
+                      ),
+                      keyboardType: TextInputType.url,
+                    ),
+                    const SizedBox(height: 24),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Microsoft Teams Webhook 設置說明',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            SizedBox(height: 12),
+                            Text('1. 在 Microsoft Teams 中開啟「流程」(Workflows)'),
+                            Text('2. 點選「新增流程」(Add a new workflow)'),
+                            Text('3. 選擇「收到 webhook 要求時發佈在頻道中」'),
+                            Text('4. 依照指引設置，完成後複製生成的 Webhook URL'),
+                            Text('5. 將 URL 貼到上方輸入欄'),
+                            SizedBox(height: 8),
+                            Text(
+                              '注意：打卡資訊將會發送到你設定的 Teams 頻道中',
+                              style: TextStyle(fontStyle: FontStyle.italic, color: Colors.red),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: _saveSettings,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.all(16),
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('保存設置'),
+                    ),
+                  ],
+                ),
               ),
             ),
     );
