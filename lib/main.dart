@@ -4,13 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:workmanager/workmanager.dart';
-import 'pages/notification_settings_page.dart';
-import 'pages/auto_clock_settings_page.dart';
-import 'services/notification_service.dart';
-import 'services/auto_clock_service.dart';
-import 'services/background_service.dart';
+
 import 'models/weekend_tracker.dart';
+import 'pages/auto_clock_settings_page.dart';
+import 'pages/notification_settings_page.dart';
+import 'services/auto_clock_service.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,7 +29,7 @@ class AttendanceApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '考勤系統',
+      title: '打卡神器',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
@@ -346,7 +345,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('考勤系統'),
+        title: const Text('打卡神器'),
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) {
