@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -61,13 +62,94 @@ class AutoClockService {
   Future<void> _initializeNotifications() async {
     const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
-    final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    final InitializationSettings initSettings = InitializationSettings(
+      android: androidSettings, 
+      iOS: iosSettings,
+    );
     
     await _notificationsPlugin.initialize(initSettings);
+    
+    // 請求權限
+    await _requestNotificationPermissions();
+  }
+  
+  // 請求通知權限
+  Future<bool> _requestNotificationPermissions() async {
+    bool permissionsGranted = false;
+    
+    try {
+      // iOS 權限
+      if (Platform.isIOS) {
+        permissionsGranted = await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true) ?? false;
+      }
+      
+      // Android 權限
+      if (Platform.isAndroid) {
+        final plugin = _notificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        
+        if (plugin != null) {
+          final arePermissionsGranted = await plugin.areNotificationsEnabled();
+          if (!(arePermissionsGranted == true)) {
+            permissionsGranted = await plugin.requestNotificationsPermission() ?? false;
+          } else {
+            permissionsGranted = true;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('AutoClockService: Error requesting notification permissions: $e');
+      permissionsGranted = false;
+    }
+    
+    return permissionsGranted;
+  }
+  
+  // 請求精確鬧鐘權限
+  Future<bool> _requestExactAlarmPermission() async {
+    bool permissionGranted = false;
+    
+    try {
+      if (Platform.isAndroid) {
+        final plugin = _notificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        
+        if (plugin != null) {
+          // 檢查是否已有權限
+          final hasExactAlarmPermission = await plugin.canScheduleExactNotifications() ?? false;
+          
+          if (!hasExactAlarmPermission) {
+            // 引導用戶到系統設置進行授權
+            await plugin.requestExactAlarmsPermission();
+            
+            permissionGranted = await plugin.canScheduleExactNotifications() ?? false;
+          } else {
+            permissionGranted = true;
+          }
+        }
+      } else {
+        // iOS 不需要這個權限
+        permissionGranted = true;
+      }
+    } catch (e) {
+      debugPrint('AutoClockService: Error requesting exact alarms permission: $e');
+      permissionGranted = false;
+    }
+    
+    return permissionGranted;
   }
 
   // 顯示自動打卡通知
   Future<void> _showAutoClockNotification(String action, String time) async {
+    // 確保有權限
+    final hasPermission = await _requestNotificationPermissions();
+    if (!hasPermission) {
+      debugPrint('AutoClockService: No notification permission, cannot show notification');
+      return;
+    }
+  
     // 通知設置
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'auto_clock_channel',
@@ -77,7 +159,7 @@ class AutoClockService {
       priority: Priority.high,
     );
     
-    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
@@ -85,7 +167,7 @@ class AutoClockService {
     
     const NotificationDetails notificationDetails = NotificationDetails(
       android: androidDetails,
-      iOS: iosDetails,
+      iOS: darwinDetails,
     );
     
     // 根據動作類型顯示不同的通知

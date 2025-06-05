@@ -18,12 +18,15 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        // 啟用 desugaring 以支援排程通知
+        coreLibraryDesugaringEnabled true
+        // 將 Java 兼容性設定為 Java 11
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
+        jvmTarget = JavaVersion.VERSION_11.toString()  // 更新至 Java 11
     }
 
     signingConfigs {
@@ -44,6 +47,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true  // 啟用 multidex 支援
     }
 
     buildTypes {
@@ -56,6 +60,13 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'  // 添加 desugaring 依賴
+    // 可能需要添加 WindowManager 依賴，以解決在 Android 12L+ 上的可能崩潰問題
+    implementation 'androidx.window:window:1.2.0'
+    implementation 'androidx.window:window-java:1.2.0'
 }
 
 flutter {

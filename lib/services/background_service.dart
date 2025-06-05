@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../models/weekend_tracker.dart';
+import 'dart:io';
 
 // 背景任務的唯一標識符
 const clockInTaskName = "com.attendance_hub.clockInTask";
@@ -119,6 +120,16 @@ class BackgroundService {
 Future<void> _showAutoClockNotification(String action, String time) async {
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   
+  // 初始化設置
+  const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+  final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+  final InitializationSettings initSettings = InitializationSettings(
+    android: androidSettings, 
+    iOS: iosSettings,
+  );
+    
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+  
   // 通知設置
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     'auto_clock_channel',
@@ -128,7 +139,7 @@ Future<void> _showAutoClockNotification(String action, String time) async {
     priority: Priority.high,
   );
   
-  const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+  const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
     presentAlert: true,
     presentBadge: true,
     presentSound: true,
@@ -136,7 +147,7 @@ Future<void> _showAutoClockNotification(String action, String time) async {
   
   const NotificationDetails notificationDetails = NotificationDetails(
     android: androidDetails,
-    iOS: iosDetails,
+    iOS: darwinDetails,
   );
   
   // 根據動作類型顯示不同的通知
@@ -246,12 +257,15 @@ Future<bool> _performClocking(String webhookUrl, String action, String today, Sh
         // 初始化設置
         const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
         final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
-        final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+        final InitializationSettings initSettings = InitializationSettings(
+          android: androidSettings, 
+          iOS: iosSettings,
+        );
         
         await flutterLocalNotificationsPlugin.initialize(initSettings);
         
         // 顯示通知
-        await _showAutoClockNotification('clockIn', formattedTime);
+        await _showAutoClockNotification(action, formattedTime);
       } else {
         // 標記今天已經下班打卡
         await prefs.setBool('clockedOut_$today', true);
@@ -264,12 +278,15 @@ Future<bool> _performClocking(String webhookUrl, String action, String today, Sh
         // 初始化設置
         const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
         final DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
-        final InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+        final InitializationSettings initSettings = InitializationSettings(
+          android: androidSettings, 
+          iOS: iosSettings,
+        );
         
         await flutterLocalNotificationsPlugin.initialize(initSettings);
         
         // 顯示通知
-        await _showAutoClockNotification('clockOut', formattedTime);
+        await _showAutoClockNotification(action, formattedTime);
       }
       return true;
     } else {

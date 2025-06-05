@@ -34,6 +34,38 @@
    flutter run
    ```
 
+## 特別設定說明
+
+### Android 通知配置說明
+
+本應用使用 Flutter Local Notifications 套件 (19.2.1+) 來管理通知，由於較新版本的變更，需要一些特殊配置：
+
+1. **Gradle 設定**：
+   - 使用 Java 11 兼容性 (coreLibraryDesugaringEnabled)
+   - `compileSdk` 設為 35
+   - `targetSdk` 設為 33 (Android 13) 以支援通知權限
+
+2. **權限**：
+   - 通知權限 (POST_NOTIFICATIONS) - Android 13+
+   - 開機啟動 (RECEIVE_BOOT_COMPLETED) - 用於重啟後復原通知
+   - 精確鬧鐘 (SCHEDULE_EXACT_ALARM 或 USE_EXACT_ALARM)
+
+3. **AndroidManifest.xml 設定**：
+   - 添加所需接收器來處理通知排程
+   - 配置 Activity 支持 `showWhenLocked` 和 `turnScreenOn`
+
+4. **權限請求流程**：
+   - 應用啟動時會自動請求通知權限
+   - 對於 Android，還會在需要時請求精確鬧鐘權限
+
+### Microsoft Teams Webhook 設置
+
+1. 在 Microsoft Teams 中開啟「流程」(Workflows)
+2. 點選「新增流程」(Add a new workflow)
+3. 選擇「收到 webhook 要求時發佈在頻道中」
+4. 依照指引設置，完成後複製生成的 Webhook URL
+5. 在應用程式的設置頁面中貼上該 URL
+
 ## 如何使用
 
 ### 基本打卡功能
@@ -43,14 +75,7 @@
 - 上下班打卡時間
 - 是否為工作日
 - 大小週末狀態
-
-### Microsoft Teams Webhook 設置
-
-1. 在 Microsoft Teams 中開啟「流程」(Workflows)
-2. 點選「新增流程」(Add a new workflow)
-3. 選擇「收到 webhook 要求時發佈在頻道中」
-4. 依照指引設置，完成後複製生成的 Webhook URL
-5. 在應用程式的設置頁面中貼上該 URL
+- 通知和自動打卡設定狀態
 
 ### 提醒通知設置
 

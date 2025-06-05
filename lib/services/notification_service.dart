@@ -1,17 +1,21 @@
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest.dart' as tz_data;
-import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
+
 import '../models/weekend_tracker.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
+
   factory NotificationService() => _instance;
+
   NotificationService._internal();
 
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -43,12 +47,8 @@ class NotificationService {
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    final DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-      onDidReceiveLocalNotification: (int id, String? title, String? body, String? payload) async {},
-    );
+    final DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings();
 
     final InitializationSettings initSettings = InitializationSettings(
       android: androidSettings,
@@ -57,33 +57,83 @@ class NotificationService {
 
     await flutterLocalNotificationsPlugin.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTap,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
     );
-    
-    // Request permission on iOS
-    if (Platform.isIOS) {
-      await flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(
-            alert: true,
-            badge: true,
-            sound: true,
-          );
-    }
 
-    // Request permission on Android
-    if (Platform.isAndroid) {
-      await flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.requestNotificationsPermission();
-    }
+    await requestNotificationPermissions();
   }
 
-  Future<void> _onNotificationTap(NotificationResponse notificationResponse) async {
-    final String? payload = notificationResponse.payload;
+  Future<bool> requestNotificationPermissions() async {
+    bool permissionsGranted = false;
     
+    try {
+      if (Platform.isIOS) {
+        permissionsGranted = await flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>()
+            ?.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+            ) ?? false;
+      }
+      
+      if (Platform.isAndroid) {
+        final plugin = flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        
+        if (plugin != null) {
+          final arePermissionsGranted = await plugin.areNotificationsEnabled();
+          if (!(arePermissionsGranted == true)) {
+            permissionsGranted = await plugin.requestNotificationsPermission() ?? false;
+          } else {
+            permissionsGranted = true;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error requesting notification permissions: $e');
+      permissionsGranted = false;
+    }
+    
+    return permissionsGranted;
+  }
+
+  Future<bool> requestExactAlarmsPermission() async {
+    bool permissionGranted = false;
+    
+    try {
+      if (Platform.isAndroid) {
+        final plugin = flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        
+        if (plugin != null) {
+          final hasExactAlarmPermission = await plugin.canScheduleExactNotifications() ?? false;
+          
+          if (!hasExactAlarmPermission) {
+            await plugin.requestExactAlarmsPermission();
+            
+            permissionGranted = await plugin.canScheduleExactNotifications() ?? false;
+          } else {
+            permissionGranted = true;
+          }
+        }
+      } else {
+        permissionGranted = true;
+      }
+    } catch (e) {
+      debugPrint('Error requesting exact alarms permission: $e');
+      permissionGranted = false;
+    }
+    
+    return permissionGranted;
+  }
+
+  Future<void> _onNotificationResponse(NotificationResponse response) async {
+    final String? payload = response.payload;
+
     if (payload == clockInActionId) {
       // Handle clock in action
       debugPrint('User tapped clock in notification');
@@ -99,7 +149,7 @@ class NotificationService {
     final prefs = await SharedPreferences.getInstance();
     final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final webhookUrl = prefs.getString('webhookUrl');
-    
+
     if (webhookUrl == null || webhookUrl.isEmpty) {
       debugPrint('Webhook URL not configured');
       return;
@@ -119,10 +169,8 @@ class NotificationService {
       final response = await http.post(
         Uri.parse(webhookUrl),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'action': action,
-          'timestamp': DateTime.now().toIso8601String()
-        }),
+        body: jsonEncode(
+            {'action': action, 'timestamp': DateTime.now().toIso8601String()}),
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -145,29 +193,40 @@ class NotificationService {
   Future<void> scheduleNotifications() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Get notification times from preferences or use defaults
+    final hasPermission = await requestNotificationPermissions();
+    if (!hasPermission) {
+      debugPrint('Notification permissions not granted, cannot schedule notifications');
+      return;
+    }
+    
+    if (Platform.isAndroid) {
+      final hasExactAlarmPermission = await requestExactAlarmsPermission();
+      if (!hasExactAlarmPermission) {
+        debugPrint('Exact alarms permission not granted, notification may not be exact');
+      }
+    }
+    
     final clockInHour = prefs.getInt(clockInHourKey) ?? defaultClockInHour;
-    final clockInMinute = prefs.getInt(clockInMinuteKey) ?? defaultClockInMinute;
+    final clockInMinute =
+        prefs.getInt(clockInMinuteKey) ?? defaultClockInMinute;
     final clockOutHour = prefs.getInt(clockOutHourKey) ?? defaultClockOutHour;
-    final clockOutMinute = prefs.getInt(clockOutMinuteKey) ?? defaultClockOutMinute;
+    final clockOutMinute =
+        prefs.getInt(clockOutMinuteKey) ?? defaultClockOutMinute;
 
-    // Get next work day
     final nextWorkDay = await _getNextWorkDay();
     if (nextWorkDay == null) {
       debugPrint('No suitable workday found for scheduling notifications');
       return;
     }
 
-    // Schedule clock in notification
     await _scheduleClockInNotification(nextWorkDay, clockInHour, clockInMinute);
     
-    // Schedule clock out notification
-    await _scheduleClockOutNotification(nextWorkDay, clockOutHour, clockOutMinute);
+    await _scheduleClockOutNotification(
+        nextWorkDay, clockOutHour, clockOutMinute);
     
     debugPrint(
-      'Scheduled notifications for ${DateFormat('yyyy-MM-dd').format(nextWorkDay)}: ' +
-      'Clock in at $clockInHour:$clockInMinute, Clock out at $clockOutHour:$clockOutMinute'
-    );
+        'Scheduled notifications for ${DateFormat('yyyy-MM-dd').format(nextWorkDay)}: ' +
+            'Clock in at $clockInHour:$clockInMinute, Clock out at $clockOutHour:$clockOutMinute');
   }
 
   Future<void> _scheduleClockInNotification(
@@ -187,7 +246,8 @@ class NotificationService {
     
     final tzDateTime = tz.TZDateTime.from(scheduledDate, tz.local);
     
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
       'clock_in_channel',
       '上班打卡提醒',
       channelDescription: '提醒您上班打卡',
@@ -195,7 +255,6 @@ class NotificationService {
       priority: Priority.high,
     );
 
-    // For iOS
     final DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
@@ -208,6 +267,9 @@ class NotificationService {
       android: androidDetails,
       iOS: iosDetails,
     );
+    
+    debugPrint(
+        'tzDateTime: $tzDateTime, hour: $hour, minute: $minute}');
 
     await flutterLocalNotificationsPlugin.zonedSchedule(
       clockInNotificationId,
@@ -216,8 +278,6 @@ class NotificationService {
       tzDateTime,
       notificationDetails,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
       payload: clockInActionId,
     );
@@ -240,7 +300,8 @@ class NotificationService {
     
     final tzDateTime = tz.TZDateTime.from(scheduledDate, tz.local);
     
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
       'clock_out_channel',
       '下班打卡提醒',
       channelDescription: '提醒您下班打卡',
@@ -248,7 +309,6 @@ class NotificationService {
       priority: Priority.high,
     );
 
-    // For iOS
     final DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
@@ -269,48 +329,39 @@ class NotificationService {
       tzDateTime,
       notificationDetails,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: DateTimeComponents.time,
       payload: clockOutActionId,
     );
   }
 
-  // Logic to determine the next work day based on the alternating weekend schedule
   Future<DateTime?> _getNextWorkDay() async {
     final now = DateTime.now();
-    
-    // Check if today is a workday
+
     if (await WeekendTracker.isWorkday()) {
       return now;
     }
-    
-    // If today isn't a workday, find the next one
+
     return _findNextWorkDay(now);
   }
 
   Future<DateTime> _findNextWorkDay(DateTime startDate) async {
     DateTime date = startDate;
     bool isWorkday = false;
-    
-    // Keep looking forward one day at a time until we find a workday
+
     while (!isWorkday) {
       date = date.add(const Duration(days: 1));
       isWorkday = await WeekendTracker.isWorkday();
     }
-    
+
     return date;
   }
 
-  // Update alternating weekend pattern
-  // Should be called at the end of each big weekend to mark the date
   Future<void> markBigWeekend() async {
     await WeekendTracker.markBigWeekend();
   }
 
-  // Save notification time settings
   Future<void> saveNotificationTimes({
-    required int clockInHour, 
+    required int clockInHour,
     required int clockInMinute,
     required int clockOutHour,
     required int clockOutMinute,
@@ -320,19 +371,18 @@ class NotificationService {
     await prefs.setInt(clockInMinuteKey, clockInMinute);
     await prefs.setInt(clockOutHourKey, clockOutHour);
     await prefs.setInt(clockOutMinuteKey, clockOutMinute);
-    
-    // Reschedule notifications with new times
+
     await scheduleNotifications();
   }
 
-  // Get notification time settings
   Future<Map<String, int>> getNotificationTimes() async {
     final prefs = await SharedPreferences.getInstance();
     return {
       'clockInHour': prefs.getInt(clockInHourKey) ?? defaultClockInHour,
       'clockInMinute': prefs.getInt(clockInMinuteKey) ?? defaultClockInMinute,
       'clockOutHour': prefs.getInt(clockOutHourKey) ?? defaultClockOutHour,
-      'clockOutMinute': prefs.getInt(clockOutMinuteKey) ?? defaultClockOutMinute,
+      'clockOutMinute':
+          prefs.getInt(clockOutMinuteKey) ?? defaultClockOutMinute,
     };
   }
-} 
+}
