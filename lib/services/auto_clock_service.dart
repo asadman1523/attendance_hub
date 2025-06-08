@@ -32,6 +32,8 @@ class AutoClockService {
   // 自動打卡通知ID
   static const int autoClockInNotificationId = 200;
   static const int autoClockOutNotificationId = 201;
+  static const int retryClockInNotificationId = 202;
+  static const int retryClockOutNotificationId = 203;
   
   // 通知插件
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -202,6 +204,53 @@ class AutoClockService {
     }
   }
 
+  // 顯示補救打卡通知
+  Future<void> _showRetryClockNotification(String action, String time) async {
+    // 確保有權限
+    final hasPermission = await _requestNotificationPermissions();
+    if (!hasPermission) {
+      debugPrint('AutoClockService: No notification permission, cannot show retry notification');
+      return;
+    }
+  
+    // 通知設置
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'retry_clock_channel',
+      '補救打卡通知',
+      channelDescription: '補救打卡成功時發送的通知',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    
+    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: darwinDetails,
+    );
+    
+    // 根據動作類型顯示不同的通知
+    if (action == 'clockIn') {
+      await _notificationsPlugin.show(
+        retryClockInNotificationId,
+        '補救上班打卡成功',
+        '系統已於 $time 自動完成補救上班打卡',
+        notificationDetails,
+      );
+    } else if (action == 'clockOut') {
+      await _notificationsPlugin.show(
+        retryClockOutNotificationId,
+        '補救下班打卡成功',
+        '系統已於 $time 自動完成補救下班打卡',
+        notificationDetails,
+      );
+    }
+  }
+
   // Start periodic check (every minute) - this runs when app is open
   void _startPeriodicCheck() {
     // Cancel any existing timer
@@ -327,8 +376,76 @@ class AutoClockService {
       }
     }
 
+    // 檢查是否需要補打卡（簡化版）
+    await _checkMissedClocking(prefs, today, now, 
+        autoClockInEnabled, autoClockOutEnabled,
+        clockInHour, clockInMinute, clockOutHour, clockOutMinute,
+        morningHalfDayLeave, afternoonHalfDayLeave, fullDayLeave);
+
     // Update the last checked date
     await prefs.setString(lastCheckedDateKey, today);
+  }
+
+  // 檢查是否需要補打卡（簡化版）
+  Future<void> _checkMissedClocking(
+    SharedPreferences prefs, 
+    String today, 
+    DateTime now,
+    bool autoClockInEnabled,
+    bool autoClockOutEnabled,
+    int clockInHour,
+    int clockInMinute,
+    int clockOutHour,
+    int clockOutMinute,
+    bool morningHalfDayLeave,
+    bool afternoonHalfDayLeave,
+    bool fullDayLeave
+  ) async {
+    // 計算原定打卡時間
+    final scheduledClockIn = DateTime(now.year, now.month, now.day, clockInHour, clockInMinute);
+    final scheduledClockOut = DateTime(now.year, now.month, now.day, clockOutHour, clockOutMinute);
+    
+    // 檢查上班打卡是否錯過且需要補打卡
+    if (autoClockInEnabled && 
+        !fullDayLeave &&
+        !morningHalfDayLeave &&
+        !(prefs.getBool('clockedIn_$today') ?? false) &&
+        now.isAfter(scheduledClockIn)) {
+      
+      // 檢查是否在合理的補打卡時間範圍內（3小時內）
+      final timeDiff = now.difference(scheduledClockIn);
+      if (timeDiff.inHours <= 3) {
+        debugPrint('AutoClockService: 檢測到錯過上班打卡，嘗試補打卡');
+        final success = await _triggerWebhook('clockIn');
+        if (success) {
+          debugPrint('AutoClockService: 上班補打卡成功');
+          // 顯示補救成功通知
+          final formattedTime = DateFormat('HH:mm:ss').format(now);
+          await _showRetryClockNotification('clockIn', formattedTime);
+        }
+      }
+    }
+    
+    // 檢查下班打卡是否錯過且需要補打卡
+    if (autoClockOutEnabled && 
+        !fullDayLeave &&
+        !afternoonHalfDayLeave &&
+        !(prefs.getBool('clockedOut_$today') ?? false) &&
+        now.isAfter(scheduledClockOut)) {
+      
+      // 檢查是否在合理的補打卡時間範圍內（3小時內）
+      final timeDiff = now.difference(scheduledClockOut);
+      if (timeDiff.inHours <= 3) {
+        debugPrint('AutoClockService: 檢測到錯過下班打卡，嘗試補打卡');
+        final success = await _triggerWebhook('clockOut');
+        if (success) {
+          debugPrint('AutoClockService: 下班補打卡成功');
+          // 顯示補救成功通知
+          final formattedTime = DateFormat('HH:mm:ss').format(now);
+          await _showRetryClockNotification('clockOut', formattedTime);
+        }
+      }
+    }
   }
 
   Future<bool> _triggerWebhook(String action, [String? customTimestamp]) async {
