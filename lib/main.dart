@@ -1101,6 +1101,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _webhookController = TextEditingController();
   bool _isLoading = true;
+  String _originalWebhookUrl = '';
 
   @override
   void initState() {
@@ -1113,17 +1114,23 @@ class _SettingsPageState extends State<SettingsPage> {
     final webhookUrl = prefs.getString('webhookUrl') ?? '';
     setState(() {
       _webhookController.text = webhookUrl;
+      _originalWebhookUrl = webhookUrl; // Store original URL
       _isLoading = false;
     });
   }
 
+  // Modified _saveSettings to not pop navigator
   Future<void> _saveSettings() async {
     setState(() {
       _isLoading = true;
     });
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('webhookUrl', _webhookController.text.trim());
+    final newWebhookUrl = _webhookController.text.trim();
+    await prefs.setString('webhookUrl', newWebhookUrl);
+
+    // Update original URL to new saved value
+    _originalWebhookUrl = newWebhookUrl;
 
     setState(() {
       _isLoading = false;
@@ -1133,83 +1140,132 @@ class _SettingsPageState extends State<SettingsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('設置已保存')),
       );
-      Navigator.of(context).pop();
     }
+  }
+
+  // Handle back button press
+  Future<bool> _onWillPop() async {
+    final hasChanged = _webhookController.text.trim() != _originalWebhookUrl;
+    if (!hasChanged) {
+      return true; // Allow pop if no changes
+    }
+
+    // If there are changes, show a confirmation dialog
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('未保存的更動'),
+        content: const Text('您的 Webhook URL 已被修改，是否要儲存變更？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false), // No
+            child: const Text('否'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true), // Yes
+            child: const Text('是'),
+          ),
+        ],
+      ),
+    );
+
+    // If user dismissed the dialog, don't pop
+    if (shouldSave == null) {
+      return false;
+    }
+
+    if (shouldSave) {
+      await _saveSettings();
+    }
+
+    return true; // Allow pop (either after saving or if user chose not to save)
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('設置'),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      'Webhook URL 設置',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '請輸入用於打卡的 webhook URL',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _webhookController,
-                      decoration: const InputDecoration(
-                        labelText: 'Webhook URL',
-                        border: OutlineInputBorder(),
-                        hintText: 'https://example.com/webhook',
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('設置'),
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Webhook URL 設置',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-                      keyboardType: TextInputType.url,
-                    ),
-                    const SizedBox(height: 24),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              'Microsoft Teams Webhook 設置說明',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                            ),
-                            SizedBox(height: 12),
-                            Text('1. 在 Microsoft Teams 中開啟「流程」(Workflows)'),
-                            Text('2. 點選「新增流程」(Add a new workflow)'),
-                            Text('3. 選擇「收到 webhook 要求時發佈在頻道中」'),
-                            Text('4. 依照指引設置，完成後複製生成的 Webhook URL'),
-                            Text('5. 將 URL 貼到上方輸入欄'),
-                            SizedBox(height: 8),
-                            Text(
-                              '注意：打卡資訊將會發送到你設定的 Teams 頻道中',
-                              style: TextStyle(fontStyle: FontStyle.italic, color: Colors.red),
-                            ),
-                          ],
+                      const SizedBox(height: 8),
+                      const Text(
+                        '請輸入用於打卡的 webhook URL',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _webhookController,
+                        decoration: const InputDecoration(
+                          labelText: 'Webhook URL',
+                          border: OutlineInputBorder(),
+                          hintText: 'https://example.com/webhook',
+                        ),
+                        keyboardType: TextInputType.url,
+                      ),
+                      const SizedBox(height: 24),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: const [
+                              Text(
+                                'Microsoft Teams Webhook 設置說明',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              SizedBox(height: 12),
+                              Text('1. 在 Microsoft Teams 中開啟「流程」(Workflows)'),
+                              Text('2. 點選「新增流程」(Add a new workflow)'),
+                              Text('3. 選擇「收到 webhook 要求時發佈在頻道中」'),
+                              Text('4. 依照指引設置，完成後複製生成的 Webhook URL'),
+                              Text('5. 將 URL 貼到上方輸入欄'),
+                              SizedBox(height: 8),
+                              Text(
+                                '注意：打卡資訊將會發送到你設定的 Teams 頻道中',
+                                style: TextStyle(
+                                    fontStyle: FontStyle.italic,
+                                    color: Colors.red),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: _saveSettings,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () async {
+                          await _saveSettings();
+                          if (mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.all(16),
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('保存設置'),
                       ),
-                      child: const Text('保存設置'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 
