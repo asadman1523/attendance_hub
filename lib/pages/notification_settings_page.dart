@@ -14,11 +14,18 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   final NotificationService _notificationService = NotificationService();
   bool _isLoading = true;
   bool _isBigWeekend = false;
-  
+
+  // Current settings
   late int _clockInHour;
   late int _clockInMinute;
   late int _clockOutHour;
   late int _clockOutMinute;
+
+  // Original settings to track changes
+  late int _originalClockInHour;
+  late int _originalClockInMinute;
+  late int _originalClockOutHour;
+  late int _originalClockOutMinute;
 
   @override
   void initState() {
@@ -29,15 +36,31 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   Future<void> _loadSettings() async {
     final settings = await _notificationService.getNotificationTimes();
     final isBigWeekend = await WeekendTracker.isBigWeekendWeek();
-    
+
     setState(() {
+      // Set current values
       _clockInHour = settings['clockInHour']!;
       _clockInMinute = settings['clockInMinute']!;
       _clockOutHour = settings['clockOutHour']!;
       _clockOutMinute = settings['clockOutMinute']!;
       _isBigWeekend = isBigWeekend;
+
+      // Store original values
+      _originalClockInHour = _clockInHour;
+      _originalClockInMinute = _clockInMinute;
+      _originalClockOutHour = _clockOutHour;
+      _originalClockOutMinute = _clockOutMinute;
+
       _isLoading = false;
     });
+  }
+
+  bool _hasChanges() {
+    final timeChanged = _clockInHour != _originalClockInHour ||
+        _clockInMinute != _originalClockInMinute ||
+        _clockOutHour != _originalClockOutHour ||
+        _clockOutMinute != _originalClockOutMinute;
+    return timeChanged;
   }
 
   Future<void> _saveSettings() async {
@@ -52,15 +75,51 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
       clockOutMinute: _clockOutMinute,
     );
 
+    setState(() {
+      _originalClockInHour = _clockInHour;
+      _originalClockInMinute = _clockInMinute;
+      _originalClockOutHour = _clockOutHour;
+      _originalClockOutMinute = _clockOutMinute;
+      _isLoading = false;
+    });
+
     if (mounted) {
-      setState(() {
-        _isLoading = false;
-      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('通知設置已保存')),
       );
-      Navigator.of(context).pop();
     }
+  }
+
+  Future<bool> _onWillPop() async {
+    if (!_hasChanges()) {
+      return true; // No changes, allow pop
+    }
+
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('未保存的更動'),
+        content: const Text('您的通知設定已被修改，是否要儲存變更？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false), // Discard
+            child: const Text('否'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true), // Save
+            child: const Text('是'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSave == null) return false; // Dialog dismissed, don't pop
+
+    if (shouldSave) {
+      await _saveSettings();
+    }
+
+    return true; // Allow pop
   }
 
   Future<void> _selectClockInTime() async {
@@ -92,16 +151,16 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
   Future<void> _markBigWeekend() async {
     await WeekendTracker.markBigWeekend();
     await _loadSettings();
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已將目前設置為大週末週期起點')),
     );
   }
-  
+
   Future<void> _resetWeekendTracking() async {
     await WeekendTracker.resetWeekendTracking();
     await _loadSettings();
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已重置週末追蹤設置')),
     );
@@ -115,7 +174,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
       const SnackBar(content: Text('已將本週設為大週末（週一、二休息）')),
     );
   }
-  
+
   Future<void> _setSmallWeekend() async {
     await WeekendTracker.setManualWeekendMode(false);
     await _loadSettings();
@@ -133,11 +192,13 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('通知設置'),
-      ),
-      body: _isLoading
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('通知設置'),
+        ),
+        body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
               child: Padding(
@@ -243,19 +304,28 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: _saveSettings,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          await _saveSettings();
+                          if (mounted) {
+                            Navigator.of(context).pop();
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.all(16),
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('保存設置'),
                       ),
-                      child: const Text('保存設置'),
                     ),
                   ],
                 ),
               ),
             ),
+      ),
     );
   }
 } 
