@@ -52,7 +52,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _clockedOutToday = false;
   String? _clockInTime;
   String? _clockOutTime;
-  late Future<void> _initFuture;
   final NotificationService _notificationService = NotificationService();
   bool _isWorkday = true;
   bool _isBigWeekend = false;
@@ -67,14 +66,15 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _afternoonHalfDayLeaveEnabled = false;
   // 整天請假狀態
   bool _fullDayLeaveEnabled = false;
-  Timer? _refreshTimer;
 
   @override
   void initState() {
     super.initState();
     // 註冊應用生命週期觀察者
     WidgetsBinding.instance.addObserver(this);
-    _initFuture = _initAttendanceStatus();
+    
+    // 直接調用初始化，不使用 Future
+    _initAttendanceStatus();
 
     // Schedule notifications when the app starts
     _scheduleNotifications();
@@ -85,8 +85,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    // 取消定時器
-    _refreshTimer?.cancel();
     
     // 取消註冊應用生命週期觀察者
     WidgetsBinding.instance.removeObserver(this);
@@ -100,16 +98,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       debugPrint('App resumed from background, reloading attendance status');
       
       // 重新載入打卡狀態
-      setState(() {
-        // 使用新的Future更新_initFuture
-        _initFuture = _initAttendanceStatus();
-      });
-      
-      // 重新啟動定期刷新
-      _startPeriodicRefresh();
+      _initAttendanceStatus();
+
     } else if (state == AppLifecycleState.paused) {
-      // 應用進入背景時，可以選擇性地停止定時器以節省資源
-      _refreshTimer?.cancel();
       debugPrint('App paused, stopping refresh timer');
     }
   }
@@ -487,101 +478,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     });
   }
   
-  // Half-day leave clock in (13:00)
-  Future<void> _halfDayLeaveClockIn() async {
-    if (!_morningHalfDayLeaveEnabled) {
-      _showMessage('上午請假模式未啟用');
-      return;
-    }
-    
-    if (_clockedInToday) {
-      _showMessage('您今天已經打過上班卡了');
-      return;
-    }
-    
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final webhookUrl = prefs.getString('webhookUrl') ?? '';
-      if (webhookUrl.isEmpty) {
-        _showMessage('請先在設置中配置打卡的 Webhook URL');
-        return;
-      }
-      
-      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final response = await http.post(
-        Uri.parse(webhookUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'action': 'clockIn',
-          'timestamp': '$today 13:00:00'  // Set time to 13:00
-        }),
-      );
-      
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        await prefs.setBool('clockedIn_$today', true);
-        await prefs.setString('clockInTime_$today', '13:00:00');
-        
-        setState(() {
-          _clockedInToday = true;
-          _clockInTime = '13:00:00';
-        });
-        
-        _showMessage('上午請假，13:00 上班打卡成功');
-      } else {
-        _showErrorDialog('上班打卡失敗', response.body);
-      }
-    } catch (e) {
-      _showMessage('發生錯誤：$e');
-    }
-  }
-  
-  // Half-day leave clock out (13:31)
-  Future<void> _halfDayLeaveClockOut() async {
-    if (!_afternoonHalfDayLeaveEnabled) {
-      _showMessage('下午請假模式未啟用');
-      return;
-    }
-    
-    if (_clockedOutToday) {
-      _showMessage('您今天已經打過下班卡了');
-      return;
-    }
-    
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final webhookUrl = prefs.getString('webhookUrl') ?? '';
-      if (webhookUrl.isEmpty) {
-        _showMessage('請先在設置中配置打卡的 Webhook URL');
-        return;
-      }
-      
-      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      final response = await http.post(
-        Uri.parse(webhookUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'action': 'clockOut',
-          'timestamp': '$today 13:31:00'  // Set time to 13:31
-        }),
-      );
-      
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        await prefs.setBool('clockedOut_$today', true);
-        await prefs.setString('clockOutTime_$today', '13:31:00');
-        
-        setState(() {
-          _clockedOutToday = true;
-          _clockOutTime = '13:31:00';
-        });
-        
-        _showMessage('下午請假，13:31 下班打卡成功');
-      } else {
-        _showErrorDialog('下班打卡失敗', response.body);
-      }
-    } catch (e) {
-      _showMessage('發生錯誤：$e');
-    }
-  }
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -678,28 +574,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ),
         ],
       ),
-      body: FutureBuilder(
-        future: _initFuture,
-        builder: (context, snapshot) {
-          // 當正在加載時顯示加載指示器，但保持UI結構
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Stack(
-              children: [
-                // 顯示上次加載的數據（如有）
-                _buildMainContent(),
-                // 半透明加載層
-                Container(
-                  color: Colors.black26,
-                  alignment: Alignment.center,
-                  child: const CircularProgressIndicator(),
-                ),
-              ],
-            );
-          }
-
-          return _buildMainContent();
-        },
-      ),
+      body: _buildMainContent(),
     );
   }
 
@@ -1076,18 +951,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  // 啟動定期刷新
+  // 移除定期刷新，依賴 WorkManager 背景服務和手動刷新
   void _startPeriodicRefresh() {
-    // 取消現有定時器（如果有）
-    _refreshTimer?.cancel();
-    
-    // 建立新定時器，每30秒刷新一次
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) {
-        debugPrint('定期刷新打卡狀態');
-        _initAttendanceStatus();
-      }
-    });
+    // 不再啟動定期刷新，改為依賴背景服務
+    debugPrint('定期刷新已移除，依賴 WorkManager 背景服務');
   }
 }
 
