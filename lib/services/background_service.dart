@@ -564,6 +564,41 @@ Future<void> _checkAndPerformMissedClocking(
   }
 }
 
+// Reschedule all tasks for the next workday
+Future<void> _rescheduleForAllTasksOnNextWorkday(SharedPreferences prefs) async {
+  final now = DateTime.now();
+  DateTime nextDay = DateTime(now.year, now.month, now.day).add(const Duration(days: 1));
+  while (true) {
+    if (await WeekendTracker.isWorkdayForDate(nextDay)) {
+      break;
+    }
+    nextDay = nextDay.add(const Duration(days: 1));
+  }
+
+  final clockInEnabled = prefs.getBool('autoClockInEnabled') ?? false;
+  final clockOutEnabled = prefs.getBool('autoClockOutEnabled') ?? false;
+
+  if (clockInEnabled) {
+    await BackgroundService.scheduleNextClockTaskStatic(
+      'clockIn',
+      prefs.getInt('autoClockInHour') ?? 9,
+      prefs.getInt('autoClockInMinute') ?? 20,
+      nextDay,
+    );
+  }
+
+  if (clockOutEnabled) {
+    await BackgroundService.scheduleNextClockTaskStatic(
+      'clockOut',
+      prefs.getInt('autoClockOutHour') ?? 18,
+      prefs.getInt('autoClockOutMinute') ?? 30,
+      nextDay,
+    );
+  }
+
+  await BackgroundService.scheduleNextStatusCheckStatic(nextDay);
+}
+
 // 全局函數，作為 AlarmManager 的入口點
 @pragma('vm:entry-point')
 Future<void> alarmCallback(int alarmId, Map<String, dynamic> params) async {
@@ -576,21 +611,8 @@ Future<void> alarmCallback(int alarmId, Map<String, dynamic> params) async {
     // 檢查是否為工作日
     final isWorkday = await WeekendTracker.isWorkday();
     if (!isWorkday) {
-      debugPrint('BackgroundTask: Today is not a workday, skipping auto-clock.');
-
-      // 仍然需要重新排程下一天的打卡
-      final taskType = params['taskType'] as String? ?? '';
-      if (taskType == 'clockIn') {
-        await BackgroundService.scheduleNextClockTaskStatic('clockIn',
-            prefs.getInt('autoClockInHour') ?? 9,
-            prefs.getInt('autoClockInMinute') ?? 20,
-            DateTime.now());
-      } else if (taskType == 'clockOut') {
-        await BackgroundService.scheduleNextClockTaskStatic('clockOut',
-            prefs.getInt('autoClockOutHour') ?? 18,
-            prefs.getInt('autoClockOutMinute') ?? 30,
-            DateTime.now());
-      }
+      debugPrint('BackgroundTask: Today is not a workday, rescheduling for next workday.');
+      await _rescheduleForAllTasksOnNextWorkday(prefs);
       return;
     }
 
