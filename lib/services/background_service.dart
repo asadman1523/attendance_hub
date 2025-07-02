@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:workmanager/workmanager.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
 import '../models/weekend_tracker.dart';
 
@@ -32,23 +32,22 @@ class BackgroundService {
 
   BackgroundService._internal();
 
-  // 初始化 Workmanager 並註冊任務回調
+  // 初始化 AlarmManager 並註冊任務回調
   Future<void> init() async {
-    await Workmanager().initialize(
-      callbackDispatcher,
-      isInDebugMode: true, // 在正式環境中設置為 false
-    );
+    await AndroidAlarmManager.initialize();
 
     // 啟動排程更新
     await updateSchedules();
   }
 
-  // 重新設計的任務排程管理 - 使用一次性任務
+  // 重新設計的任務排程管理 - 使用 AlarmManager
   Future<void> updateSchedules() async {
     final prefs = await SharedPreferences.getInstance();
 
     // 取消所有現有任務
-    await Workmanager().cancelAll();
+    await AndroidAlarmManager.cancel(1); // Clock In
+    await AndroidAlarmManager.cancel(2); // Clock Out
+    await AndroidAlarmManager.cancel(3); // Status Check
     
     // 獲取設置
     final clockInEnabled = prefs.getBool('autoClockInEnabled') ?? false;
@@ -85,17 +84,17 @@ class BackgroundService {
       nextTime = nextTime.add(const Duration(days: 1));
     }
 
-    final initialDelay = nextTime.difference(now);
-    final taskName = taskType == 'clockIn' ? clockInTaskName : clockOutTaskName;
+    final alarmId = taskType == 'clockIn' ? 1 : 2;
 
-    await Workmanager().registerOneOffTask(
-      taskName,
-      taskName,
-      initialDelay: initialDelay,
-      existingWorkPolicy: ExistingWorkPolicy.replace,
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-      ),
+    await AndroidAlarmManager.oneShotAt(
+      nextTime,
+      alarmId,
+      alarmCallback,
+      alarmClock: true,
+      allowWhileIdle: true,
+      exact: true,
+      wakeup: true,
+      params: {'taskType': taskType},
     );
 
     debugPrint('BackgroundService: Scheduled $taskType task at ${DateFormat('yyyy-MM-dd HH:mm').format(nextTime)}');
@@ -129,16 +128,15 @@ class BackgroundService {
       nextCheckTime = DateTime(now.year, now.month, now.day + 1, checkTimes[0]['hour']!, checkTimes[0]['minute']!);
     }
 
-    final initialDelay = nextCheckTime.difference(now);
-
-    await Workmanager().registerOneOffTask(
-      checkTimeTaskName,
-      checkTimeTaskName,
-      initialDelay: initialDelay,
-      existingWorkPolicy: ExistingWorkPolicy.replace,
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-      ),
+    await AndroidAlarmManager.oneShotAt(
+      nextCheckTime,
+      3,
+      alarmCallback,
+      alarmClock: true,
+      allowWhileIdle: true,
+      exact: true,
+      wakeup: true,
+      params: {'taskType': 'statusCheck'},
     );
 
     debugPrint('BackgroundService: Scheduled next status check at ${DateFormat('yyyy-MM-dd HH:mm').format(nextCheckTime)}');
@@ -153,17 +151,17 @@ class BackgroundService {
       nextTime = nextTime.add(const Duration(days: 1));
     }
 
-    final initialDelay = nextTime.difference(now);
-    final taskName = taskType == 'clockIn' ? clockInTaskName : clockOutTaskName;
+    final alarmId = taskType == 'clockIn' ? 1 : 2;
 
-    await Workmanager().registerOneOffTask(
-      taskName,
-      taskName,
-      initialDelay: initialDelay,
-      existingWorkPolicy: ExistingWorkPolicy.replace,
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-      ),
+    await AndroidAlarmManager.oneShotAt(
+      nextTime,
+      alarmId,
+      alarmCallback,
+      alarmClock: true,
+      allowWhileIdle: true,
+      exact: true,
+      wakeup: true,
+      params: {'taskType': taskType},
     );
 
     debugPrint('BackgroundTask: Scheduled $taskType task at ${DateFormat('yyyy-MM-dd HH:mm').format(nextTime)}');
@@ -195,16 +193,15 @@ class BackgroundService {
     // 如果今天沒有更多檢查時間，安排明天的第一個
     nextCheckTime ??= DateTime(now.year, now.month, now.day + 1, checkTimes[0]['hour']!, checkTimes[0]['minute']!);
 
-    final initialDelay = nextCheckTime.difference(now);
-
-    await Workmanager().registerOneOffTask(
-      checkTimeTaskName,
-      checkTimeTaskName,
-      initialDelay: initialDelay,
-      existingWorkPolicy: ExistingWorkPolicy.replace,
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-      ),
+    await AndroidAlarmManager.oneShotAt(
+      nextCheckTime,
+      3,
+      alarmCallback,
+      alarmClock: true,
+      allowWhileIdle: true,
+      exact: true,
+      wakeup: true,
+      params: {'taskType': 'statusCheck'},
     );
 
     debugPrint('BackgroundTask: Scheduled next status check at ${DateFormat('yyyy-MM-dd HH:mm').format(nextCheckTime)}');
@@ -322,7 +319,7 @@ Future<void> _showRetryClockNotification(String action, String time) async {
 }
 
 // 執行每分鐘狀態檢查 (全局函數)
-Future<bool> _performStatusCheck(String today, SharedPreferences prefs) async {
+Future<bool> _performStatusCheck(String today, SharedPreferences prefs, [bool skipClocking = false]) async {
   try {
     final now = DateTime.now();
 
@@ -384,6 +381,12 @@ Future<bool> _performStatusCheck(String today, SharedPreferences prefs) async {
     if (webhookUrl == null || webhookUrl.isEmpty) {
       debugPrint('BackgroundTask: Webhook URL not configured');
       return true; // 不是錯誤，只是沒配置
+    }
+
+    // 如果需要跳過打卡檢查，直接返回
+    if (skipClocking) {
+      debugPrint('BackgroundTask: Skipping clocking checks in status check');
+      return true;
     }
 
     // 檢查正常的上班打卡時間
@@ -561,192 +564,157 @@ Future<void> _checkAndPerformMissedClocking(
   }
 }
 
-// 全局函數，作為 Workmanager 的入口點
+// 全局函數，作為 AlarmManager 的入口點
 @pragma('vm:entry-point')
-void callbackDispatcher() {
-  Workmanager().executeTask((taskName, inputData) async {
-    try {
-      Logger().d('BackgroundTask: Task started: $taskName');
-      final prefs = await SharedPreferences.getInstance();
-      final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+Future<void> alarmCallback(int alarmId, Map<String, dynamic> params) async {
+  try {
+    final taskType = params['taskType'] as String? ?? '';
+    Logger().d('BackgroundTask: Alarm triggered with ID: $alarmId, type: $taskType');
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-      // 檢查是否為工作日
-      final isWorkday = await WeekendTracker.isWorkday();
-      if (!isWorkday) {
-        debugPrint(
-            'BackgroundTask: Today is not a workday, skipping auto-clock.');
-        return Future.value(true);
-      }
+    // 檢查是否為工作日
+    final isWorkday = await WeekendTracker.isWorkday();
+    if (!isWorkday) {
+      debugPrint('BackgroundTask: Today is not a workday, skipping auto-clock.');
 
-      // 檢查是否啟用了整天請假
-      final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
-      if (fullDayLeave) {
-        debugPrint(
-            'BackgroundTask: Full-day leave enabled, skipping auto-clock.');
-        return Future.value(true);
-      }
-
-      // 處理半天請假的特殊打卡時間
-      final now = DateTime.now();
-      final currentHour = now.hour;
-      final currentMinute = now.minute;
-
-      final morningHalfDayLeave =
-          prefs.getBool('morningHalfDayLeave_$today') ?? false;
-      final afternoonHalfDayLeave =
-          prefs.getBool('afternoonHalfDayLeave_$today') ?? false;
-
-      // 上午請假的自動打卡（13:00）
-      if (morningHalfDayLeave && currentHour >= 12 && currentMinute <= 30) {
-        // 檢查今天是否已經打卡
-        if (prefs.getBool('clockedIn_$today') ?? false) {
-          debugPrint('BackgroundTask: Already clocked in today');
-          return Future.value(true);
-        }
-
-        // 獲取 webhook URL
-        final webhookUrl = prefs.getString('webhookUrl');
-        if (webhookUrl == null || webhookUrl.isEmpty) {
-          debugPrint('BackgroundTask: Webhook URL not configured');
-          return Future.value(false);
-        }
-
-        // 執行半天假特殊打卡（固定13:00）
-
-        final response = await http.post(
-          Uri.parse(webhookUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'action': 'clockIn',
-            'timestamp': '$today 13:00:00',
-            'source': 'morning_half_day_leave_service'
-          }),
-        );
-
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          await prefs.setBool('clockedIn_$today', true);
-          await prefs.setString('clockInTime_$today', '13:00:00');
-          debugPrint(
-              'BackgroundTask: Morning half-day leave clock-in successful at 13:00:00');
-
-          // 顯示通知
-          await _showAutoClockNotification('clockIn', '13:00:00');
-          return Future.value(true);
-        }
-      }
-
-      // 下午請假的自動打卡（13:31）
-      if (afternoonHalfDayLeave && currentHour == 13 && currentMinute >= 31) {
-        // 檢查今天是否已經打卡
-        if (prefs.getBool('clockedOut_$today') ?? false) {
-          debugPrint('BackgroundTask: Already clocked out today');
-          return Future.value(true);
-        }
-
-        // 獲取 webhook URL
-        final webhookUrl = prefs.getString('webhookUrl');
-        if (webhookUrl == null || webhookUrl.isEmpty) {
-          debugPrint('BackgroundTask: Webhook URL not configured');
-          return Future.value(false);
-        }
-
-        // 執行半天假特殊打卡（固定13:31）
-
-        final response = await http.post(
-          Uri.parse(webhookUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'action': 'clockOut',
-            'timestamp': '$today 13:31:00',
-            'source': 'afternoon_half_day_leave_service'
-          }),
-        );
-
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          await prefs.setBool('clockedOut_$today', true);
-          await prefs.setString('clockOutTime_$today', '13:31:00');
-          debugPrint(
-              'BackgroundTask: Afternoon half-day leave clock-out successful at 13:31:00');
-
-          // 顯示通知
-          await _showAutoClockNotification('clockOut', '13:31:00');
-          return Future.value(true);
-        }
-      }
-
-      // 獲取 webhook URL
-      final webhookUrl = prefs.getString('webhookUrl');
-      if (webhookUrl == null || webhookUrl.isEmpty) {
-        debugPrint('BackgroundTask: Webhook URL not configured');
-        return Future.value(false);
-      }
-
-      // 處理上班打卡任務
-      if (taskName == clockInTaskName) {
-        // 檢查今天是否已經打卡
-        if (prefs.getBool('clockedIn_$today') ?? false) {
-          debugPrint('BackgroundTask: Already clocked in today');
-          // 重新安排下一次打卡
-          await BackgroundService.scheduleNextClockTaskStatic('clockIn', 
-            prefs.getInt('autoClockInHour') ?? 9, 
-            prefs.getInt('autoClockInMinute') ?? 20, 
+      // 仍然需要重新排程下一天的打卡
+      final taskType = params['taskType'] as String? ?? '';
+      if (taskType == 'clockIn') {
+        await BackgroundService.scheduleNextClockTaskStatic('clockIn',
+            prefs.getInt('autoClockInHour') ?? 9,
+            prefs.getInt('autoClockInMinute') ?? 20,
             DateTime.now());
-          return Future.value(true);
-        }
+      } else if (taskType == 'clockOut') {
+        await BackgroundService.scheduleNextClockTaskStatic('clockOut',
+            prefs.getInt('autoClockOutHour') ?? 18,
+            prefs.getInt('autoClockOutMinute') ?? 30,
+            DateTime.now());
+      }
+      return;
+    }
 
-        // 執行上班打卡
-        final success = await _performClocking(webhookUrl, 'clockIn', today, prefs);
+    // 檢查是否啟用了整天請假
+    final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
+    if (fullDayLeave) {
+      debugPrint('BackgroundTask: Full-day leave enabled, skipping auto-clock.');
+      
+      // 仍然需要重新排程下一天的打卡
+      final taskType = params['taskType'] as String? ?? '';
+      if (taskType == 'clockIn') {
+        await BackgroundService.scheduleNextClockTaskStatic('clockIn', 
+          prefs.getInt('autoClockInHour') ?? 9, 
+          prefs.getInt('autoClockInMinute') ?? 20, 
+          DateTime.now());
+      } else if (taskType == 'clockOut') {
+        await BackgroundService.scheduleNextClockTaskStatic('clockOut', 
+          prefs.getInt('autoClockOutHour') ?? 18, 
+          prefs.getInt('autoClockOutMinute') ?? 30, 
+          DateTime.now());
+      }
+      
+      return;
+    }
+
+    // 獲取 webhook URL
+    final webhookUrl = prefs.getString('webhookUrl');
+    if (webhookUrl == null || webhookUrl.isEmpty) {
+      debugPrint('BackgroundTask: Webhook URL not configured');
+      return;
+    }
+
+    // 根據任務類型執行相應操作
+    switch (taskType) {
+      case 'clockIn':
+        // 檢查今天是否已經打卡
+        if (prefs.getBool('clockedIn_$today') ?? false) {
+          debugPrint('BackgroundTask: Already clocked in today');
+        } else {
+          // 執行上班打卡
+          final success = await _performClocking(webhookUrl, 'clockIn', today, prefs);
+          if (success) {
+            debugPrint('BackgroundTask: clocked in success');
+            // 設置一個標記，表示剛剛執行了打卡
+            await prefs.setString('lastClockAction_$today', 'clockIn_${DateTime.now().millisecondsSinceEpoch}');
+          }
+        }
         
         // 無論成功與否，都安排下一次打卡
         await BackgroundService.scheduleNextClockTaskStatic('clockIn', 
           prefs.getInt('autoClockInHour') ?? 9, 
           prefs.getInt('autoClockInMinute') ?? 20, 
           DateTime.now());
-          
-        return Future.value(success);
-      }
+        break;
 
-      // 處理下班打卡任務
-      if (taskName == clockOutTaskName) {
+      case 'clockOut':
         // 檢查今天是否已經打卡
         if (prefs.getBool('clockedOut_$today') ?? false) {
           debugPrint('BackgroundTask: Already clocked out today');
-          // 重新安排下一次打卡
-          await BackgroundService.scheduleNextClockTaskStatic('clockOut', 
-            prefs.getInt('autoClockOutHour') ?? 18, 
-            prefs.getInt('autoClockOutMinute') ?? 30, 
-            DateTime.now());
-          return Future.value(true);
+        } else {
+          // 執行下班打卡
+          final success = await _performClocking(
+              webhookUrl, 'clockOut', today, prefs);
+          if (success) {
+            debugPrint('BackgroundTask: clocked out success');
+            // 設置一個標記，表示剛剛執行了打卡
+            await prefs.setString('lastClockAction_$today', 'clockOut_${DateTime
+                .now()
+                .millisecondsSinceEpoch}');
+          }
         }
-
-        // 執行下班打卡
-        final success = await _performClocking(webhookUrl, 'clockOut', today, prefs);
 
         // 無論成功與否，都安排下一次打卡
         await BackgroundService.scheduleNextClockTaskStatic('clockOut', 
           prefs.getInt('autoClockOutHour') ?? 18, 
           prefs.getInt('autoClockOutMinute') ?? 30, 
           DateTime.now());
-          
-        return Future.value(success);
-      }
+        break;
 
-      // 處理狀態檢查任務
-      if (taskName == checkTimeTaskName) {
-        final success = await _performStatusCheck(today, prefs);
+      case 'statusCheck':
+        // 檢查是否剛剛執行過打卡動作（防止重複打卡）
+        final lastClockAction = prefs.getString('lastClockAction_$today') ?? '';
+        final now = DateTime.now();
+        
+        // 如果在 2 分鐘內剛執行過打卡，跳過 status check 的打卡檢查
+        bool skipClockingInStatusCheck = false;
+        if (lastClockAction.isNotEmpty) {
+          try {
+            final actionParts = lastClockAction.split('_');
+            if (actionParts.length >= 2) {
+              final timestamp = int.parse(actionParts[1]);
+              final timeDiff = now.millisecondsSinceEpoch - timestamp;
+              if (timeDiff < 120000) { // 2 分鐘內
+                skipClockingInStatusCheck = true;
+                debugPrint('BackgroundTask: Skipping status check clocking - recent clock action detected');
+                await BackgroundService.scheduleNextStatusCheckStatic(DateTime.now());
+              }
+            }
+          } catch (e) {
+            debugPrint('BackgroundTask: Error parsing last clock action: $e');
+          }
+        }
+        
+        final success = await _performStatusCheck(today, prefs, skipClockingInStatusCheck);
+        
+        // 檢查是否為當天最後一次檢查（18:55），如果是則關閉整天請假開關
+        if (now.hour == 18 && now.minute == 55) {
+          final fullDayLeave = prefs.getBool('fullDayLeave_$today') ?? false;
+          if (fullDayLeave) {
+            await prefs.setBool('fullDayLeave_$today', false);
+            debugPrint('BackgroundTask: Auto-disabled full-day leave at end of day');
+          }
+        }
         
         // 安排下一次狀態檢查
         await BackgroundService.scheduleNextStatusCheckStatic(DateTime.now());
-        
-        return Future.value(success);
-      }
+        break;
 
-      return Future.value(true);
-    } catch (e) {
-      debugPrint('BackgroundTask: Error executing task: $e');
-      return Future.value(false);
+      default:
+        debugPrint('BackgroundTask: Unknown task type: $taskType');
     }
-  });
+  } catch (e) {
+    debugPrint('BackgroundTask: Error executing alarm: $e');
+  }
 }
 
 Future<bool> _performClocking(String webhookUrl, String action, String today,

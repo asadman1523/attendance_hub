@@ -78,9 +78,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Schedule notifications when the app starts
     _scheduleNotifications();
-    
-    // 添加定期刷新機制
-    _startPeriodicRefresh();
   }
 
   @override
@@ -949,12 +946,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else {
       return '未啟用';
     }
-  }
-
-  // 移除定期刷新，依賴 WorkManager 背景服務和手動刷新
-  void _startPeriodicRefresh() {
-    // 不再啟動定期刷新，改為依賴背景服務
-    debugPrint('定期刷新已移除，依賴 WorkManager 背景服務');
   }
 }
 

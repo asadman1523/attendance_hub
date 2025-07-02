@@ -26,7 +26,7 @@ class AutoClockService {
   static const int defaultClockInHour = 9;
   static const int defaultClockInMinute = 20;
   static const int defaultClockOutHour = 18;
-  static const int defaultClockOutMinute = 30;
+  static const int defaultClockOutMinute = 35;
 
   // 自動打卡通知ID
   static const int autoClockInNotificationId = 200;

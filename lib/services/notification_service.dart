@@ -35,7 +35,7 @@ class NotificationService {
   static const int defaultClockInHour = 9;
   static const int defaultClockInMinute = 20;
   static const int defaultClockOutHour = 18;
-  static const int defaultClockOutMinute = 30;
+  static const int defaultClockOutMinute = 35;
 
   // Action IDs
   static const String clockInActionId = 'clock_in';
@@ -191,6 +191,7 @@ class NotificationService {
   }
 
   Future<void> scheduleNotifications() async {
+    await flutterLocalNotificationsPlugin.cancelAll();
     final prefs = await SharedPreferences.getInstance();
     
     final hasPermission = await requestNotificationPermissions();
@@ -221,12 +222,8 @@ class NotificationService {
 
     await _scheduleClockInNotification(nextWorkDay, clockInHour, clockInMinute);
     
-    await _scheduleClockOutNotification(
-        nextWorkDay, clockOutHour, clockOutMinute);
-    
-    debugPrint(
-        'Scheduled notifications for ${DateFormat('yyyy-MM-dd').format(nextWorkDay)}: ' +
-            'Clock in at $clockInHour:$clockInMinute, Clock out at $clockOutHour:$clockOutMinute');
+    await _scheduleClockOutNotification(nextWorkDay, clockOutHour, clockOutMinute);
+
   }
 
   Future<void> _scheduleClockInNotification(
@@ -240,8 +237,7 @@ class NotificationService {
     );
     
     if (scheduledDate.isBefore(DateTime.now())) {
-      debugPrint('Clock-in time is in the past, not scheduling');
-      return;
+      scheduledDate.add(const Duration(days: 1));
     }
     
     final tzDateTime = tz.TZDateTime.from(scheduledDate, tz.local);
@@ -269,7 +265,7 @@ class NotificationService {
     );
     
     debugPrint(
-        'tzDateTime: $tzDateTime, hour: $hour, minute: $minute}');
+        'NotificationService: notification at tzDateTime: $tzDateTime, hour: $hour, minute: $minute}');
 
     await flutterLocalNotificationsPlugin.zonedSchedule(
       clockInNotificationId,
@@ -294,12 +290,14 @@ class NotificationService {
     );
 
     if (scheduledDate.isBefore(DateTime.now())) {
-      debugPrint('Clock-out time is in the past, not scheduling');
-      return;
+      scheduledDate.add(const Duration(days: 1));
     }
     
     final tzDateTime = tz.TZDateTime.from(scheduledDate, tz.local);
-    
+
+    debugPrint(
+        'NotificationService: notification at tzDateTime: $tzDateTime, hour: $hour, minute: $minute}');
+
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'clock_out_channel',
