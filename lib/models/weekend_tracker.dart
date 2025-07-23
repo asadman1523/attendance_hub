@@ -67,10 +67,13 @@ class WeekendTracker {
   static Future<void> markBigWeekend() async {
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
-    await prefs.setInt(lastBigWeekendKey, now.millisecondsSinceEpoch);
+    // Normalize to the beginning of the week (Monday) to ensure consistent cycle calculation
+    final today = DateTime(now.year, now.month, now.day);
+    final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
+    await prefs.setInt(lastBigWeekendKey, startOfWeek.millisecondsSinceEpoch);
     // Clear any manual override
     await prefs.setBool(manualOverrideKey, false);
-    debugPrint('Marked today (${now.toIso8601String()}) as the latest big weekend');
+    debugPrint('Marked this week (starting ${startOfWeek.toIso8601String()}) as the latest big weekend');
   }
   
   // Reset the big weekend tracking (for testing or manual adjustments)
@@ -82,11 +85,25 @@ class WeekendTracker {
     debugPrint('Reset weekend tracking');
   }
   
-  // Manually set whether this is a big weekend week or not
+  // Manually set whether this is a big or small weekend week, and permanently calibrate the cycle.
   static Future<void> setManualWeekendMode(bool isBigWeekend) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(manualOverrideKey, true);
-    await prefs.setBool(manualOverrideValueKey, isBigWeekend);
-    debugPrint('Manually set weekend mode to: ${isBigWeekend ? "Big Weekend" : "Small Weekend"}');
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
+
+    if (isBigWeekend) {
+      // If this week is a big weekend, set the start of this week as the last big weekend.
+      await prefs.setInt(lastBigWeekendKey, startOfWeek.millisecondsSinceEpoch);
+      debugPrint('Calibrated cycle: This week (starting ${startOfWeek.toIso8601String()}) is now a BIG weekend.');
+    } else {
+      // If this week is a small weekend, set the start of LAST week as the last big weekend.
+      final startOfLastWeek = startOfWeek.subtract(const Duration(days: 7));
+      await prefs.setInt(lastBigWeekendKey, startOfLastWeek.millisecondsSinceEpoch);
+      debugPrint('Calibrated cycle: This week (starting ${startOfWeek.toIso8601String()}) is now a SMALL weekend.');
+    }
+
+    // After calibration, the manual override is no longer needed.
+    await prefs.setBool(manualOverrideKey, false);
   }
 } 
