@@ -31,8 +31,6 @@ class AutoClockService {
   // 自動打卡通知ID
   static const int autoClockInNotificationId = 200;
   static const int autoClockOutNotificationId = 201;
-  static const int retryClockInNotificationId = 202;
-  static const int retryClockOutNotificationId = 203;
   
   // 通知插件
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();

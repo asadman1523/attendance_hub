@@ -10,13 +10,9 @@ import 'models/weekend_tracker.dart';
 import 'pages/auto_clock_settings_page.dart';
 import 'pages/notification_settings_page.dart';
 import 'services/auto_clock_service.dart';
-import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize notification service
-  await NotificationService().init();
 
   // Initialize auto clock service (which also initializes background service)
   await AutoClockService().init();
@@ -52,15 +48,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _clockedOutToday = false;
   String? _clockInTime;
   String? _clockOutTime;
-  final NotificationService _notificationService = NotificationService();
   bool _isWorkday = true;
   bool _isBigWeekend = false;
   bool _autoClockInEnabled = false;
   bool _autoClockOutEnabled = false;
   String _weekday = '';
   bool _hasWebhook = false;
-  String? _notificationInTime;
-  String? _notificationOutTime;
   // Half-day leave state variables
   bool _morningHalfDayLeaveEnabled = false;
   bool _afternoonHalfDayLeaveEnabled = false;
@@ -75,9 +68,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     
     // 直接調用初始化，不使用 Future
     _initAttendanceStatus();
-
-    // Schedule notifications when the app starts
-    _scheduleNotifications();
   }
 
   @override
@@ -100,11 +90,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else if (state == AppLifecycleState.paused) {
       debugPrint('App paused, stopping refresh timer');
     }
-  }
-
-  Future<void> _scheduleNotifications() async {
-    await _notificationService.scheduleNotifications();
-    _checkWorkdayStatus();
   }
 
   Future<void> _checkWorkdayStatus() async {
@@ -144,10 +129,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     // Get auto-clock settings
     final autoClockSettings = await AutoClockService().getAutoClockSettings();
-    
-    // Get notification settings
-    final notificationSettings = await _notificationService.getNotificationTimes();
-    
+
     // Check webhook configuration
     final webhookUrl = prefs.getString('webhookUrl') ?? '';
     
@@ -165,8 +147,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _autoClockInEnabled = autoClockSettings['clockInEnabled'];
       _autoClockOutEnabled = autoClockSettings['clockOutEnabled'];
       _hasWebhook = webhookUrl.isNotEmpty;
-      _notificationInTime = '${notificationSettings['clockInHour'].toString().padLeft(2, '0')}:${notificationSettings['clockInMinute'].toString().padLeft(2, '0')}';
-      _notificationOutTime = '${notificationSettings['clockOutHour'].toString().padLeft(2, '0')}:${notificationSettings['clockOutMinute'].toString().padLeft(2, '0')}';
       _morningHalfDayLeaveEnabled = morningHalfDayLeave;
       _afternoonHalfDayLeaveEnabled = afternoonHalfDayLeave;
       _fullDayLeaveEnabled = fullDayLeave;
@@ -530,7 +510,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   MaterialPageRoute(
                       builder: (context) => const NotificationSettingsPage()),
                 ).then((_) {
-                  _scheduleNotifications();
                   _initAttendanceStatus(); // Refresh all status info
                 });
               } else if (value == 'auto_clock') {
@@ -677,30 +656,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    
-                    // 提醒設置資訊
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.notifications,
-                          color: Colors.blue,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '提醒：上班 $_notificationInTime / 下班 $_notificationOutTime',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.blue,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    
+
                     // Webhook 狀態資訊
                     Row(
                       children: [

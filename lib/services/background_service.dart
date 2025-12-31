@@ -22,8 +22,6 @@ const checkTimeTaskName = "com.attendance_hub.checkTimeTask";
 // 自動打卡通知ID
 const autoClockInNotificationId = 100;
 const autoClockOutNotificationId = 101;
-const retryClockInNotificationId = 102;
-const retryClockOutNotificationId = 103;
 
 class BackgroundService {
   static final BackgroundService _instance = BackgroundService._internal();
@@ -263,60 +261,6 @@ Future<void> _showAutoClockNotification(String action, String time) async {
   }
 }
 
-// 顯示補救打卡通知
-Future<void> _showRetryClockNotification(String action, String time) async {
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  // 初始化設置
-  const AndroidInitializationSettings androidSettings =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  final DarwinInitializationSettings iosSettings =
-      DarwinInitializationSettings();
-  final InitializationSettings initSettings = InitializationSettings(
-    android: androidSettings,
-    iOS: iosSettings,
-  );
-
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
-
-  // 通知設置
-  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'retry_clock_channel',
-    '補救打卡通知',
-    channelDescription: '補救打卡成功時發送的通知',
-    importance: Importance.high,
-    priority: Priority.high,
-  );
-
-  const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
-    presentAlert: true,
-    presentBadge: true,
-    presentSound: true,
-  );
-
-  const NotificationDetails notificationDetails = NotificationDetails(
-    android: androidDetails,
-    iOS: darwinDetails,
-  );
-
-  // 根據動作類型顯示不同的通知
-  if (action == 'clockIn') {
-    await flutterLocalNotificationsPlugin.show(
-      retryClockInNotificationId,
-      '補救上班打卡成功',
-      '系統已於 $time 自動完成補救上班打卡',
-      notificationDetails,
-    );
-  } else {
-    await flutterLocalNotificationsPlugin.show(
-      retryClockOutNotificationId,
-      '補救下班打卡成功',
-      '系統已於 $time 自動完成補救下班打卡',
-      notificationDetails,
-    );
-  }
-}
 
 // 執行每分鐘狀態檢查 (全局函數)
 Future<bool> _performStatusCheck(String today, SharedPreferences prefs, [bool skipClocking = false]) async {
@@ -411,21 +355,6 @@ Future<bool> _performStatusCheck(String today, SharedPreferences prefs, [bool sk
       return true;
     }
 
-    // 檢查是否需要補打卡
-    await _checkAndPerformMissedClocking(
-        webhookUrl,
-        today,
-        prefs,
-        now,
-        autoClockInEnabled,
-        autoClockOutEnabled,
-        clockInHour,
-        clockInMinute,
-        clockOutHour,
-        clockOutMinute,
-        morningHalfDayLeave,
-        afternoonHalfDayLeave);
-
     return true;
   } catch (e) {
     debugPrint('BackgroundTask: Error in status check: $e');
@@ -501,66 +430,6 @@ Future<void> _performAfternoonHalfDayClocking(
   } catch (e) {
     debugPrint(
         'BackgroundTask: Error in afternoon half-day leave clocking: $e');
-  }
-}
-
-// 檢查並執行補打卡 - 全局函數
-Future<void> _checkAndPerformMissedClocking(
-  String webhookUrl,
-  String today,
-  SharedPreferences prefs,
-  DateTime now,
-  bool autoClockInEnabled,
-  bool autoClockOutEnabled,
-  int clockInHour,
-  int clockInMinute,
-  int clockOutHour,
-  int clockOutMinute,
-  bool morningHalfDayLeave,
-  bool afternoonHalfDayLeave,
-) async {
-  try {
-    // 計算原定打卡時間
-    final scheduledClockIn =
-        DateTime(now.year, now.month, now.day, clockInHour, clockInMinute);
-    final scheduledClockOut =
-        DateTime(now.year, now.month, now.day, clockOutHour, clockOutMinute);
-
-    // 檢查上班補打卡
-    if (autoClockInEnabled &&
-        !morningHalfDayLeave &&
-        !(prefs.getBool('clockedIn_$today') ?? false) &&
-        now.isAfter(scheduledClockIn)) {
-      final timeDiff = now.difference(scheduledClockIn);
-      if (timeDiff.inHours <= 3) {
-        debugPrint('BackgroundTask: 檢測到錯過上班打卡，執行補打卡');
-        final success =
-            await _performClocking(webhookUrl, 'clockIn', today, prefs);
-        if (success) {
-          final formattedTime = DateFormat('HH:mm:ss').format(now);
-          await _showRetryClockNotification('clockIn', formattedTime);
-        }
-      }
-    }
-
-    // 檢查下班補打卡
-    if (autoClockOutEnabled &&
-        !afternoonHalfDayLeave &&
-        !(prefs.getBool('clockedOut_$today') ?? false) &&
-        now.isAfter(scheduledClockOut)) {
-      final timeDiff = now.difference(scheduledClockOut);
-      if (timeDiff.inHours <= 3) {
-        debugPrint('BackgroundTask: 檢測到錯過下班打卡，執行補打卡');
-        final success =
-            await _performClocking(webhookUrl, 'clockOut', today, prefs);
-        if (success) {
-          final formattedTime = DateFormat('HH:mm:ss').format(now);
-          await _showRetryClockNotification('clockOut', formattedTime);
-        }
-      }
-    }
-  } catch (e) {
-    debugPrint('BackgroundTask: Error in missed clocking check: $e');
   }
 }
 
